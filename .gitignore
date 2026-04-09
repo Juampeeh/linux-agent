@@ -1,0 +1,48 @@
+# Entorno virtual
+venv/
+.venv/
+env/
+
+# Variables de entorno (¡NUNCA versionar!)
+.env
+
+# Caché de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Archivos de sesiones exportadas
+sesion_*.md
+
+# Distribución / empaquetado
+dist/
+build/
+*.egg-info/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Deploy helpers (no versionados)
+deploy_to_vm.py
+run_tests_on_vm.py
+github_push.py
+git_init_on_vm.py
+
+# Deploy helpers (no versionados)
+deploy_to_vm.py
+run_tests_on_vm.py
+github_push.py
+git_init_on_vm.py

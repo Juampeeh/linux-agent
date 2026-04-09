@@ -1,0 +1,14 @@
+{
+  "_comentario": "Lista de modelos LM Studio. Editá este archivo o usá /model en el chat.",
+  "models": [
+    "google/gemma-4-26b-a4",
+    "nvidia/nemotron-3-nano-4b",
+    "qwen/qwen2.5-coder-32b",
+    "deepseek-coder-6.7b-instruct",
+    "meta-llama/llama-3.1-8b-instruct",
+    "microsoft/phi-4",
+    "mistralai/mistral-7b-instruct-v0.3",
+    "lmstudio-community/qwen2.5-14b-instruct",
+    "qwen/qwen3.5-9b"
+  ]
+}

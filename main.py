@@ -1,0 +1,490 @@
+#!/usr/bin/env python3
+# =============================================================================
+# main.py — Linux Local AI Agent
+# Punto de entrada: banner + selección de motor + bucle de chat interactivo
+# =============================================================================
+
+from __future__ import annotations
+import sys
+import json
+import os
+from datetime import datetime
+from pathlib import Path
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+from rich.table import Table
+from rich.rule import Rule
+from rich.prompt import Prompt
+from rich import print as rprint
+
+import config as cfg
+from llm.router import crear_agente, motores_disponibles, intentar_fallback_local
+from llm.history import HistorialCanonico
+from llm.tool_registry import HERRAMIENTAS, SYSTEM_PROMPT
+from tools import ejecutar_bash
+
+console = Console()
+
+# ── Constantes ────────────────────────────────────────────────────────────────
+MAX_ITERACIONES = 10   # Máx de tool calls por turno (evita loops infinitos)
+VERSION         = "1.0.0"
+
+
+# =============================================================================
+# Banner ASCII
+# =============================================================================
+
+BANNER = r"""
+ ██╗     ██╗███╗   ██╗██╗   ██╗██╗  ██╗      █████╗  ██████╗ ███████╗███╗   ██╗████████╗
+ ██║     ██║████╗  ██║██║   ██║╚██╗██╔╝     ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝
+ ██║     ██║██╔██╗ ██║██║   ██║ ╚███╔╝      ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   
+ ██║     ██║██║╚██╗██║██║   ██║ ██╔██╗      ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   
+ ███████╗██║██║ ╚████║╚██████╔╝██╔╝ ██╗     ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   
+ ╚══════╝╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   
+"""
+
+
+def mostrar_banner() -> None:
+    """Muestra el banner de inicio con información del sistema."""
+    console.print(Text(BANNER, style="bold cyan"))
+    console.print(
+        Panel(
+            f"[bold]Linux Local AI Agent[/] [dim]v{VERSION}[/]\n"
+            f"[dim]Agente autónomo con ejecución local de comandos bash[/]",
+            border_style="cyan",
+            expand=False,
+        )
+    )
+    console.print()
+
+
+# =============================================================================
+# Menú de selección de motor e inicialización
+# =============================================================================
+
+def _load_lm_models() -> list[str]:
+    """Lee lm_models.json y retorna la lista de modelos."""
+    path = Path(cfg.LM_MODELS_FILE)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data.get("models", []) if isinstance(data, dict) else []
+    except Exception:
+        return []
+
+
+def _save_lm_models(models: list[str]) -> None:
+    """Guarda la lista de modelos en lm_models.json."""
+    data = {
+        "_comentario": "Lista de modelos LM Studio. Editá este archivo o usá /model en el chat.",
+        "models": models,
+    }
+    Path(cfg.LM_MODELS_FILE).write_text(
+        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def menu_modelo_local() -> str | None:
+    """Submenú de selección de modelo LM Studio. Retorna model_id o None (autodetectar)."""
+    modelos = _load_lm_models()
+    if len(modelos) <= 1:
+        return modelos[0] if modelos else None
+
+    console.print()
+    console.print(Rule("[bold cyan]🧠 Seleccionar modelo LM Studio[/]", style="cyan"))
+    console.print("  [dim]0.[/] Autodetectar modelo activo en LM Studio")
+    for i, m in enumerate(modelos, 1):
+        console.print(f"  [cyan]{i}.[/] {m}")
+    opcion_add = len(modelos) + 1
+    console.print(f"  [green]{opcion_add}.[/] ➕ Agregar modelo manualmente")
+    console.print()
+
+    while True:
+        try:
+            opcion = Prompt.ask("  Modelo", console=console).strip()
+        except (KeyboardInterrupt, EOFError):
+            return None
+
+        if opcion == "0":
+            console.print("[green]  ✓ Autodetectando modelo...[/]\n")
+            return None
+
+        if opcion.isdigit():
+            idx = int(opcion) - 1
+            if 0 <= idx < len(modelos):
+                console.print(f"[green]  ✓ Modelo: {modelos[idx]}[/]\n")
+                return modelos[idx]
+            if int(opcion) == opcion_add:
+                nuevo = Prompt.ask("  Identificador del modelo", console=console).strip()
+                if nuevo:
+                    if nuevo not in modelos:
+                        modelos.append(nuevo)
+                        _save_lm_models(modelos)
+                        console.print(f"[green]  ✓ Modelo '{nuevo}' guardado.[/]")
+                    return nuevo
+
+        console.print("[red]  Opción no válida.[/]")
+
+
+def menu_motor() -> tuple[str, str | None]:
+    """
+    Menú de selección de motor de IA.
+    Retorna (clave_motor, model_id).
+    """
+    disponibles = motores_disponibles()
+    claves = list(disponibles.keys())
+
+    # Si solo hay un motor, seleccionar automáticamente
+    if len(claves) == 1:
+        clave = claves[0]
+        console.print(f"\n  [dim]Motor único disponible: {disponibles[clave]['nombre']}[/dim]\n")
+        model_id = menu_modelo_local() if clave == "local" else None
+        return clave, model_id
+
+    console.print()
+    console.print(Rule("[bold magenta]🤖 Seleccionar motor de IA[/]", style="magenta"))
+
+    for i, clave in enumerate(claves, 1):
+        meta = disponibles[clave]
+        console.print(f"  [magenta]{i}.[/] [bold]{meta['nombre']}[/]")
+        console.print(f"     [dim]{meta['descripcion']}[/dim]")
+    console.print()
+
+    while True:
+        try:
+            opcion = Prompt.ask("  Motor", console=console).strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[cyan]  Usando LM Studio por defecto.[/]\n")
+            return "local", None
+
+        elegido = None
+        if opcion.isdigit():
+            idx = int(opcion) - 1
+            if 0 <= idx < len(claves):
+                elegido = claves[idx]
+        elif opcion.lower() in disponibles:
+            elegido = opcion.lower()
+
+        if elegido:
+            console.print(f"\n[green]  ✓ Motor: {disponibles[elegido]['nombre']}[/]\n")
+            model_id = menu_modelo_local() if elegido == "local" else None
+            return elegido, model_id
+
+        console.print("[red]  Opción no válida.[/]")
+
+
+# =============================================================================
+# Procesamiento de comandos especiales del CLI
+# =============================================================================
+
+def _cmd_ayuda() -> bool:
+    """Muestra los comandos disponibles. Retorna True (comando procesado)."""
+    tabla = Table(title="Comandos del agente", border_style="cyan", show_header=True)
+    tabla.add_column("Comando",     style="cyan bold", no_wrap=True)
+    tabla.add_column("Descripción", style="white")
+
+    comandos = [
+        ("/auto",           "Activa/desactiva modo autónomo (toggle confirmación de comandos)"),
+        ("/confirm",        "Alias de /auto"),
+        ("/switch <motor>", "Cambia el motor de IA en caliente (ej: /switch gemini)"),
+        ("/engines",        "Lista motores disponibles y cuál está activo"),
+        ("/model",          "Selecciona modelo LM Studio (solo motor 'local')"),
+        ("/export",         "Guarda la sesión actual como archivo .md"),
+        ("/clear",          "Limpia el historial de conversación"),
+        ("/ayuda",          "Muestra esta pantalla de ayuda"),
+        ("/help",           "Alias de /ayuda"),
+        ("Ctrl+C",          "Sale del agente"),
+    ]
+    for cmd, desc in comandos:
+        tabla.add_row(cmd, desc)
+
+    console.print(tabla)
+    return True
+
+
+def _cmd_engines(agente_actual) -> bool:
+    """Lista motores disponibles. Retorna True."""
+    disponibles = motores_disponibles()
+    tabla = Table(title="Motores de IA disponibles", border_style="magenta", show_header=True)
+    tabla.add_column("Clave",  style="magenta",   no_wrap=True)
+    tabla.add_column("Nombre", style="bold white", no_wrap=True)
+    tabla.add_column("Estado", style="green",      no_wrap=True)
+
+    for clave, meta in disponibles.items():
+        activo = "✓ ACTIVO" if meta["nombre"] in agente_actual.nombre_motor else ""
+        tabla.add_row(clave, meta["nombre"], activo)
+
+    console.print(tabla)
+    return True
+
+
+# =============================================================================
+# Bucle principal del agente
+# =============================================================================
+
+def bucle_agente(motor_inicial: str, model_id_inicial: str | None) -> None:
+    """
+    Bucle interactivo del agente. Procesa input del usuario, tool calls y respuestas.
+    """
+    # ── Inicializar motor ─────────────────────────────────────────────────────
+    console.print(f"  ⚙ Iniciando motor [bold]{motor_inicial}[/]...", end=" ")
+    try:
+        agente = crear_agente(motor_inicial, model_id_inicial)
+        agente.inicializar()
+        console.print("[green]✓[/]")
+    except Exception as e:
+        console.print(f"[red]✗[/]\n  [red]Error:[/] {e}")
+        console.print("  [yellow]Intentando fallback a LM Studio...[/]")
+        agente = intentar_fallback_local()
+        if agente is None:
+            console.print("[bold red]  ✗ No se pudo inicializar ningún motor. Verificá la conexión.[/]")
+            return
+
+    # ── Estado en tiempo de ejecución ────────────────────────────────────────
+    require_confirmation: bool = cfg.REQUIRE_CONFIRMATION
+    motor_actual: str          = motor_inicial
+
+    # ── Historial ─────────────────────────────────────────────────────────────
+    historial = HistorialCanonico(system_prompt=SYSTEM_PROMPT)
+
+    # ── Mostrar estado inicial ────────────────────────────────────────────────
+    _mostrar_estado(agente, require_confirmation)
+
+    console.print(
+        Panel(
+            "[dim]Escribí tu pregunta o pedido. "
+            "Usá [bold]/ayuda[/] para ver los comandos disponibles. "
+            "[bold]Ctrl+C[/] para salir.[/dim]",
+            border_style="dim",
+        )
+    )
+    console.print()
+
+    # ── Bucle de chat ─────────────────────────────────────────────────────────
+    while True:
+        try:
+            user_input = Prompt.ask(
+                f"[bold green]◆[/] [bold white]You[/]",
+                console=console,
+            ).strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n\n[cyan]  Hasta luego. 👋[/cyan]\n")
+            break
+
+        if not user_input:
+            continue
+
+        # ── Comandos especiales ────────────────────────────────────────────────
+        cmd = user_input.lower()
+
+        if cmd in ("/ayuda", "/help"):
+            _cmd_ayuda()
+            continue
+
+        if cmd in ("/auto", "/confirm"):
+            require_confirmation = not require_confirmation
+            if not require_confirmation:
+                console.print(Panel(
+                    "⚠️  [bold yellow]MODO AUTÓNOMO ACTIVADO[/bold yellow]\n"
+                    "[dim]El agente ejecutará comandos sin preguntar.[/dim]",
+                    border_style="yellow",
+                ))
+            else:
+                console.print(Panel(
+                    "🛡️  [bold green]MODO SEGURO ACTIVADO[/bold green]\n"
+                    "[dim]Se requerirá confirmación (Y/n) para cada comando.[/dim]",
+                    border_style="green",
+                ))
+            continue
+
+        if cmd in ("/engines", "/motores", "/motor"):
+            _cmd_engines(agente)
+            continue
+
+        if cmd.startswith("/switch "):
+            nuevo_motor = user_input[8:].strip().lower()
+            agente_nuevo, motor_actual_nuevo = _switch_motor(nuevo_motor, agente, motor_actual)
+            if agente_nuevo:
+                agente       = agente_nuevo
+                motor_actual = motor_actual_nuevo
+            continue
+
+        if cmd == "/model" and motor_actual == "local":
+            model_id_nuevo = menu_modelo_local()
+            if model_id_nuevo:
+                console.print(f"  ⚙ Cargando modelo [bold]{model_id_nuevo}[/]...", end=" ")
+                try:
+                    agente = crear_agente("local", model_id_nuevo)
+                    agente.inicializar()
+                    console.print("[green]✓[/]")
+                except Exception as e:
+                    console.print(f"[red]✗ Error: {e}[/]")
+            continue
+
+        if cmd == "/export":
+            _exportar_sesion(historial)
+            continue
+
+        if cmd == "/clear":
+            historial.limpiar(preservar_system=True)
+            console.print("[green]  ✓ Historial limpiado.[/]")
+            continue
+
+        # ── Enviar mensaje al LLM ──────────────────────────────────────────────
+        historial.agregar_usuario(user_input)
+        console.print()
+
+        try:
+            _procesar_turno(agente, historial, require_confirmation)
+        except Exception as e:
+            console.print(f"[bold red]  ✗ Error del agente:[/] {e}")
+            # Intentar fallback
+            console.print("  [yellow]Intentando fallback a LM Studio...[/]")
+            fallback = intentar_fallback_local()
+            if fallback:
+                agente = fallback
+                motor_actual = "local"
+                console.print("[green]  ✓ Cambiado a LM Studio.[/]")
+            else:
+                console.print("[red]  ✗ Fallback fallido. Verificá la conexión.[/]")
+
+        console.print()
+
+
+def _procesar_turno(agente, historial: HistorialCanonico, require_confirmation: bool) -> None:
+    """
+    Bucle de razonamiento: envía al LLM, procesa tool calls, itera.
+    Hasta MAX_ITERACIONES iteraciones para evitar loops.
+    """
+    for iteracion in range(MAX_ITERACIONES):
+        respuesta = agente.enviar_turno(historial, HERRAMIENTAS)
+
+        # ── Sin tool calls: imprimir respuesta final ──────────────────────────
+        if not respuesta.tiene_tool_calls:
+            if respuesta.texto:
+                console.print(
+                    Panel(
+                        respuesta.texto,
+                        title=f"[bold cyan]🤖 {agente.nombre_motor}[/]",
+                        border_style="cyan",
+                    )
+                )
+                # Registrar respuesta en historial
+                historial.agregar_asistente(respuesta.texto)
+            return
+
+        # ── Con tool calls: procesar cada una ────────────────────────────────
+        # Registrar assistant message con tool_calls en formato OpenAI
+        tool_calls_raw = [
+            {
+                "id":       tc.call_id,
+                "type":     "function",
+                "function": {
+                    "name":      tc.nombre,
+                    "arguments": json.dumps(tc.argumentos),
+                },
+            }
+            for tc in respuesta.tool_calls
+        ]
+        historial.agregar_asistente(respuesta.texto, tool_calls=tool_calls_raw)
+
+        # Mostrar texto de razonamiento si hay
+        if respuesta.texto:
+            console.print(f"[dim italic]  💭 {respuesta.texto}[/dim italic]")
+
+        # Ejecutar cada tool call
+        for tc in respuesta.tool_calls:
+            if tc.nombre == "execute_local_bash":
+                comando = tc.argumentos.get("comando", "")
+                resultado = ejecutar_bash(comando, require_confirmation=require_confirmation)
+            else:
+                resultado = f"Herramienta '{tc.nombre}' no reconocida."
+                console.print(f"[yellow]  ⚠ {resultado}[/yellow]")
+
+            historial.agregar_resultado_tool(
+                tool_call_id=tc.call_id,
+                nombre=tc.nombre,
+                resultado=resultado,
+            )
+
+    # Si llegamos aquí, se agotaron las iteraciones
+    console.print(
+        f"[yellow]  ⚠ Se alcanzó el límite de {MAX_ITERACIONES} iteraciones.[/yellow]"
+    )
+
+
+def _switch_motor(nuevo_motor: str, agente_actual, motor_actual: str):
+    """
+    Intenta cambiar el motor. Retorna (nuevo_agente, nuevo_motor) o (None, motor_actual).
+    """
+    disponibles = motores_disponibles()
+    if nuevo_motor not in disponibles:
+        console.print(
+            f"[red]  Motor '{nuevo_motor}' no disponible.[/]\n"
+            f"  Disponibles: {list(disponibles.keys())}"
+        )
+        return None, motor_actual
+
+    console.print(f"  ⚙ Cambiando a [bold]{nuevo_motor}[/]...", end=" ")
+    try:
+        nuevo = crear_agente(nuevo_motor)
+        nuevo.inicializar()
+        console.print("[green]✓[/]")
+        console.print(f"  [cyan]Motor activo: {nuevo.nombre_motor}[/]")
+        return nuevo, nuevo_motor
+    except Exception as e:
+        console.print(f"[red]✗[/]\n  [red]Error:[/] {e}")
+        return None, motor_actual
+
+
+def _mostrar_estado(agente, require_confirmation: bool) -> None:
+    """Muestra el panel de estado del agente."""
+    modo = (
+        "[bold red]🛡 MODO SEGURO[/bold red] (confirmación requerida)"
+        if require_confirmation
+        else "[bold yellow]⚠ MODO AUTÓNOMO[/bold yellow] (sin confirmación)"
+    )
+    console.print(
+        Panel(
+            f"🤖 Motor: [bold cyan]{agente.nombre_motor}[/bold cyan]\n"
+            f"🔧 Herramientas: execute_local_bash\n"
+            f"🔒 Modo: {modo}",
+            title="[bold]Estado del Agente[/]",
+            border_style="blue",
+        )
+    )
+
+
+def _exportar_sesion(historial: HistorialCanonico) -> None:
+    """Exporta el historial como archivo markdown."""
+    ts        = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename  = f"sesion_{ts}.md"
+    contenido = historial.exportar_markdown()
+    try:
+        Path(filename).write_text(contenido, encoding="utf-8")
+        console.print(f"[green]  ✓ Sesión exportada a [bold]{filename}[/bold][/]")
+    except Exception as e:
+        console.print(f"[red]  ✗ Error al exportar: {e}[/]")
+
+
+# =============================================================================
+# Entry point
+# =============================================================================
+
+def main() -> None:
+    mostrar_banner()
+
+    try:
+        motor, model_id = menu_motor()
+        bucle_agente(motor, model_id)
+    except KeyboardInterrupt:
+        console.print("\n[cyan]  Hasta luego. 👋[/cyan]\n")
+    except SystemExit:
+        pass
+
+
+if __name__ == "__main__":
+    main()
