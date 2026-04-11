@@ -7,27 +7,156 @@
 
 ## Tabla de contenidos
 
-1. [Inicio rápido](#1-inicio-rápido)
-2. [Modo seguro vs. modo autónomo](#2-modo-seguro-vs-modo-autónomo)
-3. [Comandos del CLI](#3-comandos-del-cli)
-4. [Configurar motores de IA](#4-configurar-motores-de-ia)
-   - 4.1 [LM Studio en red LAN](#41-lm-studio-en-red-lan)
-   - 4.2 [Ollama en Ubuntu (local)](#42-ollama-en-ubuntu-local)
-   - 4.3 [Ollama en red LAN](#43-ollama-en-red-lan)
-   - 4.4 [Google Gemini (API Key)](#44-google-gemini-api-key)
-   - 4.5 [Grok xAI (API Key)](#45-grok-xai-api-key)
-   - 4.6 [OpenAI ChatGPT (API Key)](#46-openai-chatgpt-api-key)
-   - 4.7 [Anthropic Claude (API Key)](#47-anthropic-claude-api-key)
-5. [Cambiar motor en caliente](#5-cambiar-motor-en-caliente)
-6. [Editar configuración (.env)](#6-editar-configuración-env)
-7. [Ejecutar sin entorno virtual (venv)](#7-ejecutar-sin-entorno-virtual-venv)
-8. [Mantener el proyecto actualizado (Git)](#8-mantener-el-proyecto-actualizado-git)
-9. [Referencia de archivos](#9-referencia-de-archivos)
-10. [Solución de problemas](#10-solución-de-problemas)
+1. [Instalación desde cero](#1-instalación-desde-cero)
+2. [Inicio rápido](#2-inicio-rápido)
+3. [Modo seguro vs. modo autónomo](#3-modo-seguro-vs-modo-autónomo)
+4. [Comandos del CLI](#4-comandos-del-cli)
+5. [Configurar motores de IA](#5-configurar-motores-de-ia)
+   - 5.1 [LM Studio en red LAN](#51-lm-studio-en-red-lan)
+   - 5.2 [Ollama en Ubuntu (local)](#52-ollama-en-ubuntu-local)
+   - 5.3 [Ollama en red LAN](#53-ollama-en-red-lan)
+   - 5.4 [Google Gemini (API Key)](#54-google-gemini-api-key)
+   - 5.5 [Grok xAI (API Key)](#55-grok-xai-api-key)
+   - 5.6 [OpenAI ChatGPT (API Key)](#56-openai-chatgpt-api-key)
+   - 5.7 [Anthropic Claude (API Key)](#57-anthropic-claude-api-key)
+6. [Cambiar motor en caliente](#6-cambiar-motor-en-caliente)
+7. [Editar configuración (.env)](#7-editar-configuración-env)
+8. [Ejecutar sin entorno virtual (venv)](#8-ejecutar-sin-entorno-virtual-venv)
+9. [Mantener el proyecto actualizado (Git)](#9-mantener-el-proyecto-actualizado-git)
+10. [Referencia de archivos](#10-referencia-de-archivos)
+11. [Solución de problemas](#11-solución-de-problemas)
 
 ---
 
-## 1. Inicio rápido
+## 1. Instalación desde cero
+
+> **Esta sección es para instalar el agente en una Ubuntu nueva** (VM, VPS, servidor físico).
+> Si el agente ya está instalado, pasá directo a la [sección 2](#2-inicio-rápido).
+
+### Prerequisitos mínimos
+
+```bash
+sudo apt update && sudo apt install -y git python3 python3-venv python3-pip
+```
+
+> Ubuntu 24.04+ ya trae Python 3.12 instalado. El comando anterior solo
+> asegura que git, venv y pip estén disponibles.
+
+---
+
+### Método A — Setup automático con venv (recomendado)
+
+```bash
+# 1. Clonar el repositorio
+git clone https://github.com/Juampeeh/linux-agent.git
+cd linux-agent
+
+# 2. Ejecutar el instalador interactivo
+python3 setup.py
+```
+
+El setup te va a preguntar:
+- **URL de LM Studio** → ingresá `http://IP_DE_TU_PC:1234/v1` (ej: `http://192.168.0.142:1234/v1`)
+- **¿Confirmar antes de ejecutar comandos?** → `True` (recomendado) o `False`
+- **API Keys** de Gemini, OpenAI, Grok, Claude → presioná Enter para omitir las que no uses
+
+```bash
+# 3. Iniciar el agente
+source venv/bin/activate
+python main.py
+```
+
+**Eso es todo.** El agente está listo.
+
+---
+
+### Método B — Sin venv (Python del sistema)
+
+Para poder ejecutar `python3 main.py` directamente sin activar el venv:
+
+```bash
+# 1. Clonar
+git clone https://github.com/Juampeeh/linux-agent.git
+cd linux-agent
+
+# 2. Instalar deps en el Python del sistema
+#    (detecta Ubuntu 24.04+ y usa --break-system-packages automáticamente)
+python3 install_system.py
+
+# 3. Configurar el .env
+cp .env.example .env
+nano .env
+# Editar al menos: LMSTUDIO_BASE_URL y/o las API keys que uses
+
+# 4. Iniciar
+python3 main.py
+```
+
+---
+
+### Lo mínimo que hay que editar en `.env`
+
+Abrir con `nano .env` y ajustar solo lo que aplique:
+
+```env
+# Si LM Studio corre en otra PC de la red:
+LMSTUDIO_BASE_URL=http://192.168.0.XXX:1234/v1
+
+# Si LM Studio corre en la misma máquina:
+LMSTUDIO_BASE_URL=http://localhost:1234/v1
+
+# APIs de nube (solo las que tenés):
+GEMINI_API_KEY=AIza...
+GROK_API_KEY=xai-...
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+El resto ya tiene valores por defecto correctos (`COMMAND_TIMEOUT=60`, `REQUIRE_CONFIRMATION=True`, etc.).
+
+---
+
+### Diagrama del flujo de instalación
+
+```
+Ubuntu (nueva instancia)
+         ↓
+sudo apt install git python3 python3-venv python3-pip
+         ↓
+git clone https://github.com/Juampeeh/linux-agent.git && cd linux-agent
+         ↓
+    ┌────────────────────────────────────┐
+    │  ¿Con venv o sin venv?             │
+    └──────────┬─────────────┬──────────┘
+               ↓             ↓
+        python3 setup.py   python3 install_system.py
+               ↓             ↓
+        source venv/bin/  cp .env.example .env
+          activate &       nano .env
+        python main.py           ↓
+                         python3 main.py
+```
+
+---
+
+### Instalación para Ubuntu sin sudo configurado
+
+Si el usuario del sistema no tiene permisos sudo:
+
+```bash
+# Opción 1 — hacerlo como root primero:
+su root
+apt update && apt install -y git python3 python3-venv python3-pip
+exit
+
+# Opción 2 — agregar el usuario a sudoers (requiere reiniciar sesión):
+su root -c "usermod -aG sudo $(logname)"
+exit  # cerrar sesión y volver a entrar
+```
+
+---
+
+## 2. Inicio rápido
 
 ### Conectarse a la VM y arrancar el agente
 
@@ -69,7 +198,7 @@ python main.py
 
 ---
 
-## 2. Modo seguro vs. modo autónomo
+## 3. Modo seguro vs. modo autónomo
 
 Este es **el control más importante** del agente. Determina si puede ejecutar comandos bash sin pedirte permiso.
 
@@ -105,7 +234,7 @@ REQUIRE_CONFIRMATION=False   # Arranca en modo autónomo
 
 ---
 
-## 3. Comandos del CLI
+## 4. Comandos del CLI
 
 | Comando | Descripción |
 |---------|-------------|
@@ -131,7 +260,7 @@ REQUIRE_CONFIRMATION=False   # Arranca en modo autónomo
 
 ---
 
-## 4. Configurar motores de IA
+## 5. Configurar motores de IA
 
 Toda la configuración se hace en `~/linux_agent/.env`:
 
@@ -143,7 +272,7 @@ nano ~/linux_agent/.env
 
 ---
 
-### 4.1 LM Studio en red LAN
+### 5.1 LM Studio en red LAN
 
 **Caso típico:** LM Studio corre en otra PC de la red (ej: `192.168.0.142`), la VM accede a él por LAN.
 
@@ -187,7 +316,7 @@ curl http://192.168.0.142:1234/v1/models
 
 ---
 
-### 4.2 Ollama en Ubuntu (local)
+### 5.2 Ollama en Ubuntu (local)
 
 **Caso típico:** instalar Ollama en la misma VM Ubuntu para tener un LLM local sin GPU externa.
 
@@ -230,7 +359,7 @@ sudo systemctl enable ollama    # arrancar automáticamente con el sistema
 
 ---
 
-### 4.3 Ollama en red LAN
+### 5.3 Ollama en red LAN
 
 **Caso típico:** Ollama corre en otra PC de la LAN con GPU, accedido desde la VM.
 
@@ -262,7 +391,7 @@ curl http://192.168.0.XXX:11434/api/tags
 
 ---
 
-### 4.4 Google Gemini (API Key)
+### 5.4 Google Gemini (API Key)
 
 1. Ir a https://aistudio.google.com/apikey
 2. **Create API Key** → copiar (empieza con `AIza...`)
@@ -279,7 +408,7 @@ GEMINI_MODEL=gemini-2.0-flash         # rápido y gratuito (recomendado)
 
 ---
 
-### 4.5 Grok xAI (API Key)
+### 5.5 Grok xAI (API Key)
 
 1. Ir a https://console.x.ai → iniciar sesión con cuenta de X
 2. **API Keys → Create API Key** → copiar (empieza con `xai-...`)
@@ -296,7 +425,7 @@ GROK_MODEL=grok-3-mini                # económico (recomendado)
 
 ---
 
-### 4.6 OpenAI ChatGPT (API Key)
+### 5.6 OpenAI ChatGPT (API Key)
 
 1. Ir a https://platform.openai.com/api-keys
 2. **Create new secret key** → copiar (empieza con `sk-...`)
@@ -313,7 +442,7 @@ OPENAI_MODEL=gpt-4o-mini              # económico y capaz (recomendado)
 
 ---
 
-### 4.7 Anthropic Claude (API Key)
+### 5.7 Anthropic Claude (API Key)
 
 1. Ir a https://console.anthropic.com → **API Keys → Create Key**
 2. Copiar (empieza con `sk-ant-...`)
@@ -331,7 +460,7 @@ ANTHROPIC_MODEL=claude-3-5-haiku-20241022   # rápido y económico (recomendado)
 
 ---
 
-## 5. Cambiar motor en caliente
+## 6. Cambiar motor en caliente
 
 Cambiá el motor de IA **sin reiniciar** con `/switch`. El historial se mantiene.
 
@@ -347,7 +476,7 @@ Cambiá el motor de IA **sin reiniciar** con `/switch`. El historial se mantiene
 
 ---
 
-## 6. Editar configuración (.env)
+## 7. Editar configuración (.env)
 
 ```bash
 nano ~/linux_agent/.env
@@ -383,7 +512,7 @@ MAX_OUTPUT_CHARS=4000              # límite de output enviado al LLM
 
 ---
 
-## 7. Ejecutar sin entorno virtual (venv)
+## 8. Ejecutar sin entorno virtual (venv)
 
 Por defecto el agente requiere activar el venv porque las dependencias solo están
 instaladas ahí. Hay dos formas de evitar esto:
@@ -453,7 +582,7 @@ python --version  # Python 3.x.x
 
 ---
 
-## 8. Mantener el proyecto actualizado (Git)
+## 9. Mantener el proyecto actualizado (Git)
 
 El proyecto tiene dos flujos de actualización desde Windows:
 
@@ -521,7 +650,7 @@ git diff                   # ver qué cambió
 
 ---
 
-## 9. Referencia de archivos
+## 10. Referencia de archivos
 
 ```
 ~/linux_agent/
@@ -561,7 +690,7 @@ git diff                   # ver qué cambió
 
 ---
 
-## 10. Solución de problemas
+## 11. Solución de problemas
 
 ### ❌ `python: command not found` al intentar iniciar sin venv
 
