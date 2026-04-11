@@ -38,7 +38,7 @@ ANTHROPIC_MODEL: str   = os.getenv("ANTHROPIC_MODEL", "claude-3-5-haiku-20241022
 
 # ── Comportamiento del agente ─────────────────────────────────────────────────
 REQUIRE_CONFIRMATION: bool = os.getenv("REQUIRE_CONFIRMATION", "True").lower() in ("true", "1", "yes")
-COMMAND_TIMEOUT: int       = int(os.getenv("COMMAND_TIMEOUT", "30"))
+COMMAND_TIMEOUT: int       = int(os.getenv("COMMAND_TIMEOUT", "60"))
 DEFAULT_ENGINE: str        = os.getenv("DEFAULT_ENGINE", "local")
 MAX_OUTPUT_CHARS: int      = int(os.getenv("MAX_OUTPUT_CHARS", "4000"))
 

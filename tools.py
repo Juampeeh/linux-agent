@@ -16,6 +16,38 @@ console = Console()
 # Máximo de caracteres a retornar al LLM (evita sobrecargar el contexto)
 _MAX_OUTPUT = cfg.MAX_OUTPUT_CHARS
 
+# Patrones de comandos que pueden bloquearse esperando input interactivo
+_PATRONES_INTERACTIVOS = [
+    r"^\s*python\s*$",          # python sin argumentos
+    r"^\s*python3\s*$",         # python3 sin argumentos
+    r"^\s*vim\b",               # vim
+    r"^\s*nano\b",              # nano
+    r"^\s*less\b",              # less
+    r"^\s*more\b",              # more
+    r"^\s*top\b",               # top
+    r"^\s*htop\b",              # htop
+    r"^\s*ssh\b",               # ssh interactivo
+    r"^\s*mysql\s*$",           # mysql sin argumentos
+    r"^\s*psql\s*$",            # psql sin argumentos
+    r"^\s*grep -r .{0,50} ~/",  # grep recursivo en home (puede ser lento)
+    r"^\s*find / ",             # find en raiz (muy lento)
+    r"^\s*find ~/ ",            # find en home (puede ser lento)
+    r"^\s*ls -R ~/",            # ls recursivo en home
+]
+
+import re as _re
+
+
+def _es_comando_riesgoso(comando: str) -> str | None:
+    """Retorna una advertencia si el comando puede bloquearse, o None si es seguro."""
+    for patron in _PATRONES_INTERACTIVOS:
+        if _re.search(patron, comando, _re.IGNORECASE):
+            return (
+                f"El comando `{comando[:60]}` puede bloquearse esperando input interactivo. "
+                "El agente lo ejecutará con timeout pero no podrá interactuar con él."
+            )
+    return None
+
 
 def ejecutar_bash(
     comando: str,
@@ -37,6 +69,11 @@ def ejecutar_bash(
     """
     if require_confirmation is None:
         require_confirmation = cfg.REQUIRE_CONFIRMATION
+
+    # ── Advertencia si el comando puede bloquearse ────────────────────────────
+    advertencia = _es_comando_riesgoso(comando)
+    if advertencia:
+        console.print(f"[yellow]  ⚠ Advertencia:[/] {advertencia}")
 
     # ── Mostrar el comando propuesto ──────────────────────────────────────────
     cmd_text = Text()
