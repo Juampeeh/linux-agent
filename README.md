@@ -1,155 +1,191 @@
-# 🤖 Linux Local AI Agent
+# Linux Local AI Agent
 
-Agente de inteligencia artificial autónomo que se ejecuta **directamente en Linux**, con interfaz de chat en terminal (CLI) e integración multi-motor de IA.
+<div align="center">
 
-> A diferencia de un SSH Agent, este agente corre **dentro de la máquina que controla**, usando `subprocess` para ejecutar bash localmente.
+```
+██╗     ██╗███╗   ██╗██╗   ██╗██╗  ██╗      █████╗  ██████╗ ███████╗███╗   ██╗████████╗
+██║     ██║████╗  ██║██║   ██║╚██╗██╔╝     ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝
+██║     ██║██╔██╗ ██║██║   ██║ ╚███╔╝      ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║
+██║     ██║██║╚██╗██║██║   ██║ ██╔██╗      ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║
+███████╗██║██║ ╚████║╚██████╔╝██╔╝ ██╗     ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║
+╚══════╝╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝    ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝
+```
+
+**Agente autónomo de Linux con soporte multi-LLM**
+
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://python.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+</div>
 
 ---
 
-## ✨ Características
+## ¿Qué es?
 
-- **CLI interactiva y premiun** usando `rich` con colores, paneles y banners
-- **6 motores de IA soportados** — cambiables en caliente sin reiniciar
-- **Tool Calling real** — el LLM decide y ejecuta comandos bash autónomamente
-- **Modo autónomo / modo seguro** — toggle con `/auto` en cualquier momento
-- **Timeout configurable** por comando
-- **Exportación de sesiones** como Markdown
-- **Setup automático** con `setup.py`
+**Linux Local AI Agent** es un agente de IA que corre directamente en un sistema Linux y puede ejecutar comandos bash de forma autónoma según lo que le pedís. Admite múltiples motores de LLM (locales y en la nube) intercambiables en caliente desde la CLI.
+
+### Características
+
+- 🤖 **Multi-motor**: LM Studio, Ollama, Gemini, OpenAI (ChatGPT), Grok (xAI), Anthropic (Claude)
+- 🔧 **Tool calling nativo**: el LLM decide qué comandos ejecutar y los corre via `subprocess`
+- 🛡️ **Modo seguro / autónomo**: confirmación por comando o ejecución libre (toggle en runtime)
+- 🔄 **Hot-swap de motor**: cambiá el LLM sin reiniciar el agente (`/switch gemini`)
+- 📝 **Historial exportable**: exportá la sesión como markdown con `/export`
+- 🌐 **LM Studio en red LAN**: conectate a un LM Studio corriendo en otra PC de la red
 
 ---
 
-## 🚀 Inicio rápido
+## Arquitectura
+
+```
+linux_agent/
+├── main.py               # Entry point: banner + menú + bucle de chat
+├── config.py             # Variables desde .env (dotenv)
+├── tools.py              # execute_local_bash (subprocess)
+├── setup.py              # Instalador automático (venv + deps + .env)
+├── test_agent.py         # Suite de tests integral
+└── llm/
+    ├── base.py           # Clases abstractas: AgenteIA, RespuestaAgente
+    ├── history.py        # HistorialCanonico (OpenAI / Gemini / Anthropic)
+    ├── router.py         # Factory de agentes + fallback automático
+    ├── tool_registry.py  # Definición de herramientas + conversores de formato
+    ├── lmstudio_agent.py # Adaptador LM Studio (OpenAI-compatible)
+    ├── ollama_agent.py   # Adaptador Ollama
+    ├── gemini_agent.py   # Adaptador Google Gemini
+    ├── openai_agent.py   # Adaptador OpenAI ChatGPT
+    ├── grok_agent.py     # Adaptador Grok (xAI)
+    └── anthropic_agent.py# Adaptador Anthropic Claude
+```
+
+---
+
+## Instalación
+
+### Opción A: Setup automático (recomendado)
 
 ```bash
-# 1. Clonar el repositorio
+git clone https://github.com/JuampeehSA/linux-agent.git
+cd linux-agent
+python3 setup.py
+```
+
+El setup interactivo creará el `venv`, instalará dependencias y configurará el `.env`.
+
+### Opción B: Manual
+
+```bash
 git clone https://github.com/JuampeehSA/linux-agent.git
 cd linux-agent
 
-# 2. Ejecutar el instalador automático
-python3 setup.py
+# Crear entorno virtual
+python3 -m venv venv
+source venv/bin/activate  # Linux/macOS
+# venv\Scripts\activate   # Windows
 
-# 3. Activar entorno virtual e iniciar
+# Instalar dependencias
+pip install -r requirements.txt
+
+# Configurar variables de entorno
+cp .env.example .env
+nano .env  # Completar los valores necesarios
+```
+
+---
+
+## Configuración (.env)
+
+```env
+# ── Motor local (LM Studio en red LAN) ───────────────────────────────────────
+LMSTUDIO_BASE_URL=http://192.168.0.142:1234/v1
+LMSTUDIO_MODEL=                     # vacío = autodetectar
+
+# ── Ollama (local) ────────────────────────────────────────────────────────────
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_MODEL=llama3
+
+# ── APIs en la nube (opcionales, agregar según necesidad) ─────────────────────
+GEMINI_API_KEY=                      # https://aistudio.google.com/apikey
+OPENAI_API_KEY=                      # https://platform.openai.com/api-keys
+GROK_API_KEY=                        # https://console.x.ai
+ANTHROPIC_API_KEY=                   # https://console.anthropic.com
+
+# ── Comportamiento ────────────────────────────────────────────────────────────
+REQUIRE_CONFIRMATION=True            # False = modo autónomo
+COMMAND_TIMEOUT=30                   # segundos por comando
+MAX_OUTPUT_CHARS=4000                # límite de output al LLM
+```
+
+> **Nota:** El `.env` nunca se sube a git (está en `.gitignore`).
+
+---
+
+## Uso
+
+```bash
 source venv/bin/activate
 python main.py
 ```
 
----
+1. Seleccionás el motor de IA en el menú
+2. Escribís tu pedido en lenguaje natural
+3. El agente usa la herramienta `execute_local_bash` para cumplirlo
 
-## 🧠 Motores de IA soportados
-
-| Motor | Requiere Key | Endpoint |
-|-------|-------------|---------|
-| **LM Studio** | No | `http://192.168.0.142:1234/v1` (configurable) |
-| **Ollama** | No | `http://localhost:11434/v1` |
-| **Google Gemini** | Sí | `GEMINI_API_KEY` |
-| **OpenAI ChatGPT** | Sí | `OPENAI_API_KEY` |
-| **Grok (xAI)** | Sí | `GROK_API_KEY` |
-| **Anthropic Claude** | Sí | `ANTHROPIC_API_KEY` |
-
----
-
-## 🔧 Arquitectura
-
-```
-linux_agent/
-├── main.py               # CLI interactivo: banner + bucle de chat
-├── config.py             # Variables de entorno (.env)
-├── tools.py              # execute_local_bash (subprocess + rich output)
-├── setup.py              # Instalador automático
-├── lm_models.json        # Lista persistente de modelos LM Studio
-│
-└── llm/                  # Motor IA (patrón Strategy)
-    ├── base.py            # Clases base: AgenteIA, RespuestaAgente, ToolCallCanonico
-    ├── history.py         # HistorialCanonico (normaliza entre APIs)
-    ├── router.py          # Factory + motores_disponibles() + fallback automático
-    ├── tool_registry.py   # Schema JSON de herramientas
-    ├── lmstudio_agent.py  # LM Studio (OpenAI-compatible + carga remota)
-    ├── ollama_agent.py    # Ollama (OpenAI-compatible)
-    ├── gemini_agent.py    # Google Gemini
-    ├── openai_agent.py    # OpenAI ChatGPT
-    ├── grok_agent.py      # Grok (xAI)
-    └── anthropic_agent.py # Anthropic Claude
-```
-
----
-
-## 💬 Comandos del chat
+### Comandos del CLI
 
 | Comando | Descripción |
 |---------|-------------|
-| `/auto` | Toggle entre modo autónomo y modo seguro |
-| `/confirm` | Alias de `/auto` |
-| `/switch <motor>` | Cambia el motor en caliente (ej: `/switch gemini`) |
-| `/engines` | Lista motores disponibles y cuál está activo |
+| `/auto` | Toggle modo autónomo (sin confirmación) |
+| `/switch <motor>` | Cambia motor en caliente (ej: `/switch gemini`) |
+| `/engines` | Lista motores disponibles |
 | `/model` | Selecciona modelo LM Studio |
-| `/export` | Guarda la sesión como archivo `.md` |
-| `/clear` | Limpia el historial de conversación |
-| `/ayuda` | Muestra todos los comandos |
-| `Ctrl+C` | Sale del agente |
+| `/export` | Exporta la sesión como `.md` |
+| `/clear` | Limpia el historial |
+| `/ayuda` | Muestra ayuda |
+| `Ctrl+C` | Salir |
 
 ---
 
-## ⚙️ Variables de entorno (.env)
+## Motores soportados
 
-```ini
-LMSTUDIO_BASE_URL=http://192.168.0.142:1234/v1
-LMSTUDIO_MODEL=           # vacío = autodetectar
-
-OLLAMA_BASE_URL=http://localhost:11434/v1
-OLLAMA_MODEL=llama3
-
-GEMINI_API_KEY=
-OPENAI_API_KEY=
-GROK_API_KEY=
-ANTHROPIC_API_KEY=
-
-REQUIRE_CONFIRMATION=True  # True = pedir Y antes de ejecutar
-COMMAND_TIMEOUT=30
-DEFAULT_ENGINE=local
-MAX_OUTPUT_CHARS=4000
-```
+| Motor | Clave | Requiere key | Notas |
+|-------|-------|-------------|-------|
+| LM Studio | `local` | No | API OpenAI-compatible, puede ser en red LAN |
+| Ollama | `ollama` | No | Modelos locales via Ollama |
+| Google Gemini | `gemini` | Sí | `GEMINI_API_KEY` en `.env` |
+| OpenAI ChatGPT | `chatgpt` | Sí | `OPENAI_API_KEY` en `.env` |
+| Grok (xAI) | `grok` | Sí | `GROK_API_KEY` en `.env` |
+| Anthropic Claude | `claude` | Sí | `ANTHROPIC_API_KEY` en `.env` |
 
 ---
 
-## 🔒 Modos de seguridad
-
-**Modo Seguro** (default): el agente muestra el comando propuesto y espera confirmación `Y/n` antes de ejecutarlo.
-
-**Modo Autónomo**: el agente ejecuta comandos sin interrupción. Activar con `/auto` en el chat.
-
-```
-🛡️ MODO SEGURO ACTIVADO → escribe /auto para cambiar
-⚠️  MODO AUTÓNOMO ACTIVADO → el agente ejecuta sin preguntar
-```
-
----
-
-## 📦 Dependencias
-
-```
-openai>=1.0.0          # LM Studio + ChatGPT + Grok (API compatible)
-google-genai>=1.0.0    # Gemini SDK
-anthropic>=0.40.0      # Claude SDK
-python-dotenv>=1.0.0
-rich>=13.0.0           # CLI con estilo
-httpx>=0.27.0          # Carga remota de modelos en LM Studio
-prompt_toolkit>=3.0.0
-```
-
----
-
-## 🧪 Tests
+## Tests
 
 ```bash
-# En la VM
 source venv/bin/activate
 python test_agent.py
 ```
 
-Los tests cubren: imports, bash execution, timeout, conexión LM Studio, y tool call E2E.
+Prueba: imports, ejecución de bash, conexión a LM Studio, tool call E2E.
 
 ---
 
-## 📄 Licencia
+## Deploy remoto (desde Windows)
 
-MIT — libre uso y modificación.
+Para desplegar en una VM remota via SSH:
+
+```bash
+# 1. Instalar dependencias de deploy
+pip install paramiko python-dotenv
+
+# 2. Configurar credenciales en .env (sección VM Remota)
+#    VM_HOST, VM_PORT, VM_USER, VM_PASS, REMOTE_DIR
+
+# 3. Deploy
+python deploy_to_vm.py
+```
+
+---
+
+## Licencia
+
+MIT — Libre para uso personal y comercial.

@@ -1,0 +1,11 @@
+# =============================================================================
+# requirements-dev.txt — Dependencias de desarrollo/deploy (solo Windows)
+# Para scripts: deploy_to_vm.py y github_push.py
+# Instalar con: pip install -r requirements-dev.txt
+# =============================================================================
+
+# Incluye todas las deps del agente
+-r requirements.txt
+
+# Deploy y SSH desde Windows
+paramiko>=3.0.0
