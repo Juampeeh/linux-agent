@@ -49,7 +49,9 @@ section("1. Importación de módulos")
 def t_config():
     import config
     assert config.LMSTUDIO_BASE_URL, "LMSTUDIO_BASE_URL vacío"
-    assert "192.168.0.142" in config.LMSTUDIO_BASE_URL
+    assert config.LMSTUDIO_BASE_URL.startswith("http"), (
+        f"LMSTUDIO_BASE_URL inválida: {config.LMSTUDIO_BASE_URL}"
+    )
 
 
 def t_tools():

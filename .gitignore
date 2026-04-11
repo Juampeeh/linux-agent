@@ -34,15 +34,3 @@ build/
 
 # Windows
 Thumbs.db
-
-# Deploy helpers (no versionados)
-deploy_to_vm.py
-run_tests_on_vm.py
-github_push.py
-git_init_on_vm.py
-
-# Deploy helpers (no versionados)
-deploy_to_vm.py
-run_tests_on_vm.py
-github_push.py
-git_init_on_vm.py
