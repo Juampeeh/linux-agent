@@ -52,6 +52,26 @@ def verificar_python() -> None:
     _ok(f"Python {version.major}.{version.minor}.{version.micro}")
 
 
+def verificar_venv_disponible() -> None:
+    """En Ubuntu mínimo, python3-venv puede no estar instalado."""
+    result = subprocess.run(
+        [sys.executable, "-m", "venv", "--help"],
+        capture_output=True
+    )
+    if result.returncode != 0:
+        _warn("python3-venv no disponible. Intentando instalar...")
+        if shutil.which("apt"):
+            subprocess.run(
+                ["sudo", "apt", "install", "-y", "python3-venv", "python3-pip"],
+                check=False
+            )
+        else:
+            _fail(
+                "python3-venv no está instalado y no se pudo instalar automáticamente.\n"
+                "  Instalá manualmente: sudo apt install python3-venv python3-pip"
+            )
+
+
 def crear_venv() -> Path:
     print(f"\n{BOLD}[2/5] Creando entorno virtual...{RESET}")
     venv_path = Path(".") / "venv"
@@ -59,6 +79,8 @@ def crear_venv() -> Path:
     if venv_path.exists():
         _warn(f"El directorio venv/ ya existe. Usando el existente.")
         return venv_path
+
+    verificar_venv_disponible()
 
     _info("Creando venv en ./venv/")
     _run([sys.executable, "-m", "venv", str(venv_path)])
