@@ -236,8 +236,28 @@ class NuevoAgente(AgenteIA):
 ## Estado actual (Abril 2026)
 
 - ✅ **12/12 tests** pasando en VM `192.168.0.162`
-- ✅ **LM Studio** conectado en `192.168.0.142:1234` con 14 modelos
+- ✅ **LM Studio** conectado en `192.168.0.142:1234` con 14+ modelos disponibles
 - ✅ **Tool Call E2E** verificado con `google/gemma-4-26b-a4b`
 - ✅ **GitHub** publicado: https://github.com/Juampeeh/linux-agent
+- ✅ **`COMMAND_TIMEOUT` = 60s** (subido de 30s)
+- ✅ **Carga de modelo LM Studio no-fatal** — si el modelo tarda en cargar, el agente
+  continúa y LM Studio lo carga en el primer request de inferencia
+- ✅ **`_TIMEOUT_INFER_S` = 120s** — timeout del cliente OpenAI para modelos grandes
+- ✅ **`install_system.py`** — instala deps en Python del sistema (sin venv)
+- ✅ **Detección de comandos interactivos** en `tools.py` — avisa antes de ejecutar
+  comandos que pueden bloquearse (`vim`, `grep -r ~/`, `ls -R ~/`, etc.)
 - ⬜ Ollama en VM no instalado (no se probó aún)
 - ⬜ APIs de nube (Gemini/Grok/OpenAI/Claude) configurables pero no testeadas en esta VM
+
+## Comportamiento LM Studio — carga de modelos
+
+Cuando el usuario selecciona un modelo del menú (`lm_models.json`), `inicializar()` llama
+a `_cargar_modelo_si_necesario()`. Esta función:
+1. Verifica si el modelo ya está en `/v1/models` → si sí, retorna
+2. Intenta cargar via `/api/v0/models/load` (API nativa LM Studio >= 0.3.x)
+3. Hace polling hasta que aparezca en `/v1/models` (máx 180s)
+4. Si hay timeout o error HTTP → **lanza `RuntimeError`**, pero `inicializar()` lo captura
+   y continúa con un aviso. El agente arranca de todas formas.
+
+Esto evita que el usuario quede bloqueado cuando LM Studio no soporta la API de carga
+o cuando el modelo tarda más de lo esperado.

@@ -1,6 +1,6 @@
 # 📖 Manual de Usuario — Linux Local AI Agent
 
-> **Versión:** 1.0.0 | **Plataforma:** Ubuntu Linux (VM/físico) + Windows (desarrollo)
+> **Versión:** 1.0.1 | **Plataforma:** Ubuntu Linux (VM/físico) + Windows (desarrollo)
 > **Repositorio:** https://github.com/Juampeeh/linux-agent
 
 ---
@@ -20,9 +20,10 @@
    - 4.7 [Anthropic Claude (API Key)](#47-anthropic-claude-api-key)
 5. [Cambiar motor en caliente](#5-cambiar-motor-en-caliente)
 6. [Editar configuración (.env)](#6-editar-configuración-env)
-7. [Mantener el proyecto actualizado (Git)](#7-mantener-el-proyecto-actualizado-git)
-8. [Referencia de archivos](#8-referencia-de-archivos)
-9. [Solución de problemas](#9-solución-de-problemas)
+7. [Ejecutar sin entorno virtual (venv)](#7-ejecutar-sin-entorno-virtual-venv)
+8. [Mantener el proyecto actualizado (Git)](#8-mantener-el-proyecto-actualizado-git)
+9. [Referencia de archivos](#9-referencia-de-archivos)
+10. [Solución de problemas](#10-solución-de-problemas)
 
 ---
 
@@ -42,6 +43,11 @@ source venv/bin/activate
 python main.py
 ```
 
+> **¿Por qué `python` y no `python3`?**
+> En Ubuntu, el comando `python` no existe por defecto — solo `python3`.
+> Al activar el venv (`source venv/bin/activate`), el entorno crea el alias `python`
+> apuntando al Python del venv. Fuera del venv siempre usá `python3`.
+
 ### Lo que verás al arrancar
 
 ```
@@ -53,240 +59,203 @@ python main.py
    4. OpenAI ChatGPT            → requiere OPENAI_API_KEY
    5. Grok (xAI)               → requiere GROK_API_KEY
    6. Anthropic Claude          → requiere ANTHROPIC_API_KEY
-   (Solo aparecen los que tienen key configurada)
 
 3. Panel de estado inicial con modo activo
 4. Prompt de chat listo para escribir
 ```
 
-> **Nota:** Solo verás en el menú los motores que tenés disponibles.  
-> LM Studio y Ollama siempre aparecen (no necesitan API key).  
-> Los motores de nube solo aparecen si tienen su `API_KEY` en el `.env`.
+> **Nota:** Solo aparecen en el menú los motores con su `API_KEY` configurada.
+> LM Studio y Ollama siempre aparecen (no necesitan API key).
 
 ---
 
 ## 2. Modo seguro vs. modo autónomo
 
-Este es **el control más importante** del agente. Determina si el agente puede ejecutar comandos bash sin pedirte permiso.
+Este es **el control más importante** del agente. Determina si puede ejecutar comandos bash sin pedirte permiso.
 
 ### 🛡️ Modo seguro (por defecto)
 
-- **Estado:** el agente **pregunta antes de ejecutar** cada comando
-- **Indicador visual:** panel azul con `🔒 Modo: 🛡 MODO SEGURO`
-- **Comportamiento al ejecutar:** muestra el comando y pregunta `¿Ejecutar este comando? [Y/n]`
-  - Presionar **Enter** o **Y** → ejecuta el comando
-  - Escribir **n** → cancela el comando (el agente lo registra pero no lo ejecuta)
-
-```
-╭──────────────── Estado del Agente ────────────────╮
-│ 🤖 Motor: LM Studio [gemma-4-26b]                 │
-│ 🔧 Herramientas: execute_local_bash               │
-│ 🔒 Modo: 🛡 MODO SEGURO (confirmación requerida)  │
-╰───────────────────────────────────────────────────╯
-```
+- **Indicador:** panel con `🔒 Modo: 🛡 MODO SEGURO`
+- Pausa y pregunta **`¿Ejecutar este comando? [Y/n]`** antes de cada comando
+  - `Enter` o `Y` → ejecuta
+  - `n` → cancela (el agente lo registra pero no ejecuta)
 
 ### ⚠️ Modo autónomo
 
-- **Estado:** el agente **ejecuta sin preguntar**
-- **Indicador visual:** panel amarillo con `⚠ MODO AUTÓNOMO`
-- **Cuándo usarlo:** tareas largas donde confiás en el agente (instalaciones, configuraciones)
-- **⚠️ Precaución:** el agente puede ejecutar comandos destructivos sin confirmación
+- **Indicador:** panel amarillo `⚠ MODO AUTÓNOMO ACTIVADO`
+- Ejecuta comandos directamente sin confirmar
+- Ideal para tareas largas (`sudo apt install`, instalaciones, scripts)
+- ⚠️ El agente puede ejecutar comandos destructivos sin aviso
 
-```
-╭──────────────────────────────────╮
-│ ⚠️ MODO AUTÓNOMO ACTIVADO        │
-│ El agente ejecutará sin preguntar │
-╰──────────────────────────────────╯
-```
-
-### Cómo activar/desactivar
+### Toggle en tiempo real
 
 ```
 ◆ You: /auto
 ```
 
-El comando `/auto` es un **toggle** — alterna entre modo seguro y autónomo cada vez que lo escribís.
+Escribe `/auto` en cualquier momento para alternar entre modos. `/confirm` es un alias.
 
-También funciona `/confirm` (alias de `/auto`).
-
-### Configurar el modo por defecto en `.env`
+### Configurar el modo por defecto
 
 ```env
-# Modo seguro al iniciar (recomendado):
-REQUIRE_CONFIRMATION=True
-
-# Modo autónomo al iniciar (¡usar con cuidado!):
-REQUIRE_CONFIRMATION=False
+# En ~/linux_agent/.env:
+REQUIRE_CONFIRMATION=True    # Arranca en modo seguro (recomendado)
+REQUIRE_CONFIRMATION=False   # Arranca en modo autónomo
 ```
 
 ---
 
 ## 3. Comandos del CLI
 
-Todos los comandos empiezan con `/`. Se escriben directamente en el prompt del chat.
-
 | Comando | Descripción |
 |---------|-------------|
-| `/auto` | Toggle modo autónomo ↔ modo seguro |
+| `/auto` | Toggle modo autónomo ↔ seguro |
 | `/confirm` | Alias de `/auto` |
 | `/switch <motor>` | Cambia el motor de IA en caliente |
-| `/engines` | Lista todos los motores disponibles y cuál está activo |
+| `/engines` | Lista motores disponibles y activo |
 | `/model` | Selecciona modelo específico de LM Studio |
-| `/export` | Guarda la sesión actual como archivo `.md` |
+| `/export` | Guarda la sesión como archivo `.md` |
 | `/clear` | Limpia el historial de conversación |
-| `/ayuda` o `/help` | Muestra la tabla de ayuda |
-| `Ctrl+C` | Sale del agente |
+| `/ayuda` o `/help` | Tabla de ayuda |
+| `Ctrl+C` | Salir |
 
-### Ejemplos de uso
+### Ejemplos
 
 ```bash
-# Ver qué motores están disponibles y cuál está activo:
-◆ You: /engines
-
-# Cambiar a Gemini en caliente (sin reiniciar):
-◆ You: /switch gemini
-
-# Cambiar a LM Studio:
-◆ You: /switch local
-
-# Cambiar a Ollama:
-◆ You: /switch ollama
-
-# Activar modo autónomo para una tarea larga:
-◆ You: /auto
-◆ You: instala nginx y configura un sitio básico
-
-# Exportar la sesión para guardar el historial:
-◆ You: /export
+◆ You: /engines          # ver qué motores están disponibles
+◆ You: /switch gemini    # cambiar a Gemini sin reiniciar
+◆ You: /switch local     # volver a LM Studio
+◆ You: /auto             # activar modo autónomo
+◆ You: /export           # guardar sesión como markdown
 ```
 
 ---
 
 ## 4. Configurar motores de IA
 
-Toda la configuración se hace en el archivo `.env` ubicado en `~/linux_agent/.env`.
+Toda la configuración se hace en `~/linux_agent/.env`:
 
 ```bash
-# Abrir el .env en la VM:
 nano ~/linux_agent/.env
+# Después de editar: Ctrl+X → Y → Enter para guardar
+# Reiniciar el agente: Ctrl+C → python main.py
 ```
-
-Después de editar el `.env`, **reiniciá el agente** para que tome los nuevos valores.
 
 ---
 
 ### 4.1 LM Studio en red LAN
 
-**Caso típico:** LM Studio corre en otra PC de la red (ej: PC con GPU en `192.168.0.142`).
+**Caso típico:** LM Studio corre en otra PC de la red (ej: `192.168.0.142`), la VM accede a él por LAN.
 
 #### En la PC con LM Studio:
-1. Abrir LM Studio
-2. Ir a **Local Server** (ícono de servidor)
-3. Activar el servidor: **Start Server**
-4. En **Server Settings**: habilitar "**Serve on Local Network**"
-5. El servidor queda en `http://0.0.0.0:1234/v1` (accesible desde la LAN)
-6. Cargar un modelo haciendo clic en él
+1. Abrir LM Studio → pestaña **Local Server** (ícono `<>`)
+2. Clic en **Start Server**
+3. En **Server Settings** → activar **"Serve on Local Network"**
+4. El servidor queda en `http://0.0.0.0:1234/v1`
+5. Cargar un modelo: clic en el modelo deseado → **Load**
 
-#### En el `.env` de la VM:
+> **Sobre la carga del modelo:** cuando seleccionás un modelo del menú del agente,
+> este intenta pre-cargarlo. Si el modelo tarda más de lo esperado, el agente muestra
+> un aviso **pero continúa igual** — LM Studio lo cargará automáticamente con el primer
+> mensaje. No es un error, solo es información.
+
+#### En `.env` de la VM:
+
 ```env
 LMSTUDIO_BASE_URL=http://192.168.0.142:1234/v1
 LMSTUDIO_MODEL=                    # vacío = autodetectar el modelo activo
 ```
 
-#### Para seleccionar un modelo específico:
+#### Para apuntar a otra IP de LM Studio:
+
 ```env
-LMSTUDIO_MODEL=google/gemma-4-26b-a4b
+# LM Studio en otra PC con IP distinta:
+LMSTUDIO_BASE_URL=http://192.168.0.50:1234/v1
+
+# LM Studio en la propia VM (instalación local):
+LMSTUDIO_BASE_URL=http://localhost:1234/v1
+
+# LM Studio con puerto personalizado:
+LMSTUDIO_BASE_URL=http://192.168.0.142:8080/v1
 ```
 
-O desde el chat, usar `/model` para elegir interactivamente.
-
 #### Verificar conexión desde la VM:
+
 ```bash
-cd ~/linux_agent
-source venv/bin/activate
-python -c "
-import openai, config
-c = openai.OpenAI(base_url=config.LMSTUDIO_BASE_URL, api_key='lm-studio')
-models = c.models.list()
-print('Modelos disponibles:', [m.id for m in models.data])
-"
+curl http://192.168.0.142:1234/v1/models
 ```
 
 ---
 
 ### 4.2 Ollama en Ubuntu (local)
 
-**Caso típico:** instalar Ollama directamente en la VM Ubuntu para tener un LLM local sin GPU externa.
+**Caso típico:** instalar Ollama en la misma VM Ubuntu para tener un LLM local sin GPU externa.
 
-#### Instalación de Ollama en la VM:
+#### Instalación:
 
 ```bash
-# 1. Instalar Ollama (un solo comando):
+# Un solo comando:
 curl -fsSL https://ollama.com/install.sh | sh
 
-# 2. Verificar que esté corriendo:
+# Verificar servicio:
 systemctl status ollama
 
-# 3. Descargar un modelo (ejemplos):
-ollama pull llama3              # Llama 3 8B (recomendado, ~5GB)
-ollama pull mistral             # Mistral 7B
-ollama pull qwen2.5:7b          # Qwen 2.5 7B (muy bueno para código)
-ollama pull deepseek-r1:7b      # DeepSeek R1 (razonamiento)
-ollama pull phi3                # Phi-3 mini (muy liviano, ~2.3GB)
+# Descargar modelos (recomendados por tamaño/capacidad):
+ollama pull llama3              # Llama 3 8B — general (~5 GB)
+ollama pull qwen2.5:7b          # Qwen 2.5 7B — excelente para código (~5 GB)
+ollama pull phi3                # Phi-3 mini  — muy liviano (~2.3 GB)
+ollama pull mistral             # Mistral 7B  — bueno en general (~4 GB)
+ollama pull deepseek-r1:7b      # DeepSeek R1 — razonamiento (~5 GB)
 
-# 4. Listar modelos instalados:
+# Listar modelos instalados:
 ollama list
 
-# 5. Probar un modelo directamente:
+# Probar directamente:
 ollama run llama3
 ```
 
-#### Configurar en `.env`:
+#### En `.env`:
+
 ```env
 OLLAMA_BASE_URL=http://localhost:11434/v1
-OLLAMA_MODEL=llama3              # debe coincidir con un modelo instalado
+OLLAMA_MODEL=llama3             # debe coincidir con un modelo instalado
 ```
 
-#### Iniciar Ollama si no está corriendo:
-```bash
-# Como servicio (arranca automáticamente con el sistema):
-sudo systemctl enable ollama
-sudo systemctl start ollama
+#### Iniciar Ollama si está parado:
 
-# O manualmente:
-ollama serve
+```bash
+sudo systemctl start ollama
+sudo systemctl enable ollama    # arrancar automáticamente con el sistema
 ```
 
 ---
 
 ### 4.3 Ollama en red LAN
 
-**Caso típico:** Ollama corre en otra PC de la LAN con GPU, y querés accederlo desde la VM.
+**Caso típico:** Ollama corre en otra PC de la LAN con GPU, accedido desde la VM.
 
 #### En la PC con Ollama (configurar para escuchar en red):
 
 ```bash
-# Opción A: variable de entorno (temporal)
-OLLAMA_HOST=0.0.0.0 ollama serve
-
-# Opción B: configurar permanentemente (Linux)
+# Linux — configuración permanente:
 sudo systemctl edit ollama
-# Agregar en el archivo:
+# Agregar en el archivo que se abre:
 [Service]
 Environment="OLLAMA_HOST=0.0.0.0"
-# Guardar y reiniciar:
+# Guardar (Ctrl+X → Y) y reiniciar:
 sudo systemctl daemon-reload
 sudo systemctl restart ollama
 ```
 
-#### En el `.env` de la VM:
+#### En `.env` de la VM:
+
 ```env
-# Apuntar a la IP de la PC con Ollama en la LAN:
-OLLAMA_BASE_URL=http://192.168.0.XXX:11434/v1
+OLLAMA_BASE_URL=http://192.168.0.XXX:11434/v1    # IP de la PC con Ollama
 OLLAMA_MODEL=llama3
 ```
 
 #### Verificar desde la VM:
+
 ```bash
 curl http://192.168.0.XXX:11434/api/tags
 ```
@@ -295,21 +264,15 @@ curl http://192.168.0.XXX:11434/api/tags
 
 ### 4.4 Google Gemini (API Key)
 
-#### Obtener la key (gratis):
 1. Ir a https://aistudio.google.com/apikey
-2. Hacer clic en **Create API Key**
-3. Copiar la key (empieza con `AIza...`)
+2. **Create API Key** → copiar (empieza con `AIza...`)
 
-#### Configurar en `.env`:
 ```env
-GEMINI_API_KEY=AIzaSy...tu-key-aqui...
-GEMINI_MODEL=gemini-2.0-flash       # recomendado (gratis, rápido)
-# Otras opciones:
-# GEMINI_MODEL=gemini-1.5-pro       # más potente
-# GEMINI_MODEL=gemini-2.0-flash-thinking-experimental  # razonamiento
+GEMINI_API_KEY=AIzaSy...tu-key-aqui
+GEMINI_MODEL=gemini-2.0-flash         # rápido y gratuito (recomendado)
+# GEMINI_MODEL=gemini-1.5-pro         # más potente
 ```
 
-#### Activar en el chat:
 ```bash
 ◆ You: /switch gemini
 ```
@@ -318,22 +281,15 @@ GEMINI_MODEL=gemini-2.0-flash       # recomendado (gratis, rápido)
 
 ### 4.5 Grok xAI (API Key)
 
-#### Obtener la key:
-1. Ir a https://console.x.ai
-2. Crear cuenta / iniciar sesión con cuenta de X
-3. Ir a **API Keys** → **Create API Key**
-4. Copiar la key (empieza con `xai-...`)
+1. Ir a https://console.x.ai → iniciar sesión con cuenta de X
+2. **API Keys → Create API Key** → copiar (empieza con `xai-...`)
 
-#### Configurar en `.env`:
 ```env
-GROK_API_KEY=xai-...tu-key-aqui...
-GROK_MODEL=grok-3-mini              # recomendado (más económico)
-# Otras opciones:
-# GROK_MODEL=grok-3                 # más potente
-# GROK_MODEL=grok-3-mini-fast       # el más rápido
+GROK_API_KEY=xai-...tu-key-aqui
+GROK_MODEL=grok-3-mini                # económico (recomendado)
+# GROK_MODEL=grok-3                   # más potente
 ```
 
-#### Activar en el chat:
 ```bash
 ◆ You: /switch grok
 ```
@@ -342,21 +298,15 @@ GROK_MODEL=grok-3-mini              # recomendado (más económico)
 
 ### 4.6 OpenAI ChatGPT (API Key)
 
-#### Obtener la key:
 1. Ir a https://platform.openai.com/api-keys
-2. Hacer clic en **Create new secret key**
-3. Copiar la key (empieza con `sk-...`)
+2. **Create new secret key** → copiar (empieza con `sk-...`)
 
-#### Configurar en `.env`:
 ```env
-OPENAI_API_KEY=sk-...tu-key-aqui...
-OPENAI_MODEL=gpt-4o-mini            # recomendado (económico y muy capaz)
-# Otras opciones:
-# OPENAI_MODEL=gpt-4o               # el más potente
-# OPENAI_MODEL=o3-mini              # razonamiento
+OPENAI_API_KEY=sk-...tu-key-aqui
+OPENAI_MODEL=gpt-4o-mini              # económico y capaz (recomendado)
+# OPENAI_MODEL=gpt-4o                 # el más potente
 ```
 
-#### Activar en el chat:
 ```bash
 ◆ You: /switch chatgpt
 ```
@@ -365,21 +315,16 @@ OPENAI_MODEL=gpt-4o-mini            # recomendado (económico y muy capaz)
 
 ### 4.7 Anthropic Claude (API Key)
 
-#### Obtener la key:
-1. Ir a https://console.anthropic.com
-2. Ir a **API Keys** → **Create Key**
-3. Copiar la key (empieza con `sk-ant-...`)
+1. Ir a https://console.anthropic.com → **API Keys → Create Key**
+2. Copiar (empieza con `sk-ant-...`)
 
-#### Configurar en `.env`:
 ```env
-ANTHROPIC_API_KEY=sk-ant-...tu-key-aqui...
-ANTHROPIC_MODEL=claude-3-5-haiku-20241022   # recomendado (rápido y económico)
-# Otras opciones:
+ANTHROPIC_API_KEY=sk-ant-...tu-key-aqui
+ANTHROPIC_MODEL=claude-3-5-haiku-20241022   # rápido y económico (recomendado)
 # ANTHROPIC_MODEL=claude-sonnet-4-5         # balanceado
 # ANTHROPIC_MODEL=claude-opus-4-5           # el más potente
 ```
 
-#### Activar en el chat:
 ```bash
 ◆ You: /switch claude
 ```
@@ -388,46 +333,36 @@ ANTHROPIC_MODEL=claude-3-5-haiku-20241022   # recomendado (rápido y económico)
 
 ## 5. Cambiar motor en caliente
 
-Podés cambiar el motor de IA **sin reiniciar el agente** con `/switch`. El historial de la conversación se mantiene.
+Cambiá el motor de IA **sin reiniciar** con `/switch`. El historial se mantiene.
 
 ```bash
-◆ You: /switch local     # → LM Studio
-◆ You: /switch ollama    # → Ollama
-◆ You: /switch gemini    # → Google Gemini
-◆ You: /switch chatgpt   # → OpenAI
-◆ You: /switch grok      # → Grok (xAI)
-◆ You: /switch claude    # → Anthropic Claude
-```
-
-Para ver qué motores están disponibles (configurados):
-```bash
-◆ You: /engines
+◆ You: /switch local     # LM Studio
+◆ You: /switch ollama    # Ollama
+◆ You: /switch gemini    # Google Gemini
+◆ You: /switch chatgpt   # OpenAI
+◆ You: /switch grok      # Grok (xAI)
+◆ You: /switch claude    # Anthropic Claude
+◆ You: /engines          # ver todos los disponibles
 ```
 
 ---
 
 ## 6. Editar configuración (.env)
 
-El archivo `.env` en `~/linux_agent/.env` controla toda la configuración del agente.
-
 ```bash
-# Abrir con nano (simple):
 nano ~/linux_agent/.env
-
-# O con vim:
-vim ~/linux_agent/.env
 ```
 
 ### Referencia completa del `.env`
 
 ```env
-# ── Motor local ────────────────────────────────────────
-LMSTUDIO_BASE_URL=http://192.168.0.142:1234/v1  # IP:puerto de LM Studio
-LMSTUDIO_MODEL=                                  # vacío = autodetectar
-OLLAMA_BASE_URL=http://localhost:11434/v1         # URL de Ollama
-OLLAMA_MODEL=llama3                               # modelo de Ollama
+# ── Motor local ────────────────────────────────────────────────────────────────
+LMSTUDIO_BASE_URL=http://192.168.0.142:1234/v1   # IP:puerto de LM Studio
+LMSTUDIO_MODEL=                                   # vacío = autodetectar
+OLLAMA_BASE_URL=http://localhost:11434/v1          # URL de Ollama
+OLLAMA_MODEL=llama3                                # modelo de Ollama
 
-# ── APIs de nube ───────────────────────────────────────
+# ── APIs de nube (agregar las que uses) ───────────────────────────────────────
 GEMINI_API_KEY=                    # Google Gemini
 GEMINI_MODEL=gemini-2.0-flash
 OPENAI_API_KEY=                    # OpenAI ChatGPT
@@ -437,124 +372,180 @@ GROK_MODEL=grok-3-mini
 ANTHROPIC_API_KEY=                 # Anthropic Claude
 ANTHROPIC_MODEL=claude-3-5-haiku-20241022
 
-# ── Comportamiento ─────────────────────────────────────
+# ── Comportamiento ─────────────────────────────────────────────────────────────
 REQUIRE_CONFIRMATION=True          # True=modo seguro | False=autónomo
-COMMAND_TIMEOUT=30                 # segundos máx por comando bash
+COMMAND_TIMEOUT=60                 # segundos máx por comando bash
 DEFAULT_ENGINE=local               # motor al iniciar
-MAX_OUTPUT_CHARS=4000              # límite de output al LLM
+MAX_OUTPUT_CHARS=4000              # límite de output enviado al LLM
 ```
 
-> **Importante:** Después de editar el `.env` hay que **reiniciar el agente** (`Ctrl+C` → `python main.py`).
+> Después de editar el `.env` hay que **reiniciar el agente** (`Ctrl+C` → `python main.py`).
 
 ---
 
-## 7. Mantener el proyecto actualizado (Git)
+## 7. Ejecutar sin entorno virtual (venv)
 
-El proyecto tiene dos flujos de actualización:
+Por defecto el agente requiere activar el venv porque las dependencias solo están
+instaladas ahí. Hay dos formas de evitar esto:
 
-```
-[Windows - VS Code]  →  deploy_to_vm.py  →  [VM Ubuntu]
-[Windows - VS Code]  →  github_push.py   →  [GitHub]
-```
-
-### 7.1 Sincronización completa (VM + GitHub)
-
-Desde Windows, con el proyecto `Linux Agent` abierto:
-
-```powershell
-# 1. Subir cambios a la VM:
-python deploy_to_vm.py
-
-# 2. Publicar cambios en GitHub:
-python github_push.py --token ghp_...tu-token...
-```
-
-O usar el script combinado (más cómodo):
-```powershell
-python sync.py --token ghp_...tu-token...
-```
-
-### 7.2 Solo actualizar la VM
-
-```powershell
-python deploy_to_vm.py
-```
-
-### 7.3 Solo publicar en GitHub (desde la VM)
-
-Si estás conectado a la VM y querés hacer push directamente:
+### Opción A — Instalar deps en el Python del sistema (recomendado)
 
 ```bash
-# En la VM:
+cd ~/linux_agent
+python3 install_system.py
+```
+
+El script detecta automáticamente si estás en Ubuntu 24.04+ (que requiere
+`--break-system-packages`) y lo maneja solo. Al terminar podés ejecutar:
+
+```bash
+cd ~/linux_agent
+python3 main.py
+```
+
+> **Nota Ubuntu 24.04+:** si `install_system.py` falla con "externally-managed-environment",
+> instalá manualmente con:
+> ```bash
+> pip3 install --break-system-packages -r ~/linux_agent/requirements.txt
+> ```
+
+### Opción B — Alias permanente en `.bashrc`
+
+Agrega una línea a tu `.bashrc` para no tener que activar el venv manualmente:
+
+```bash
+# Agregar el alias:
+echo "alias linux-agent='cd ~/linux_agent && source venv/bin/activate && python main.py'" >> ~/.bashrc
+source ~/.bashrc
+
+# Usar el agente con un solo comando:
+linux-agent
+```
+
+### Opción C — Lanzador con script shell
+
+```bash
+# Crear el lanzador:
+cat > ~/run_agent.sh << 'EOF'
+#!/bin/bash
+cd ~/linux_agent
+source venv/bin/activate
+python main.py
+EOF
+chmod +x ~/run_agent.sh
+
+# Ejecutar:
+~/run_agent.sh
+```
+
+### ¿Por qué Ubuntu no tiene el comando `python`?
+
+En Ubuntu 22.04+ el comando `python` no existe por defecto — solo `python3`.
+Esto es una decisión de Debian/Ubuntu para evitar ambigüedad entre Python 2 y 3.
+
+Para crear el alias de sistema (para todos los usuarios):
+
+```bash
+sudo apt install -y python-is-python3
+# Ahora `python` apunta a python3
+python --version  # Python 3.x.x
+```
+
+---
+
+## 8. Mantener el proyecto actualizado (Git)
+
+El proyecto tiene dos flujos de actualización desde Windows:
+
+```
+[Windows VS Code]  →  deploy_to_vm.py  →  [VM Ubuntu ~/linux_agent]
+[Windows VS Code]  →  github_push.py   →  [GitHub]
+```
+
+### Sincronización completa en un comando (desde Windows)
+
+```powershell
+# Todo: deploy a VM + tests + push a GitHub
+python sync.py --token ghp_...tu-token...
+
+# Solo deploy a VM (sin GitHub):
+python sync.py --no-git
+
+# Solo GitHub (sin deploy a VM):
+python sync.py --token ghp_... --git-only
+
+# Deploy rápido sin correr tests:
+python sync.py --token ghp_... --skip-tests
+```
+
+### Push manual desde la VM (sin Windows)
+
+Si editás algo directamente en la VM y querés sincronizar con GitHub:
+
+```bash
 cd ~/linux_agent
 git add -A
-git commit -m "feat: descripción del cambio"
-
-# Push (usar el token como contraseña):
+git commit -m "fix: descripción breve del cambio"
 git push origin main
 # Usuario: Juampeeh
-# Contraseña: el token PAT (ghp_...)
+# Contraseña: tu token ghp_...
 ```
 
-### 7.4 Guardar el token en la VM (para no escribirlo cada vez)
+### Guardar el token para no escribirlo cada vez
 
 ```bash
-# En la VM, configurar credential helper:
+# En la VM — guarda credenciales para futuros push:
 git config --global credential.helper store
 
-# Hacer el primer push (solo este pedirá usuario/contraseña):
-cd ~/linux_agent
+# El primer push pedirá usuario y token:
 git push origin main
-# Escribir usuario: Juampeeh
-# Escribir contraseña: ghp_...tu-token...
-# El token queda guardado en ~/.git-credentials (formato plano)
+# → Usuario: Juampeeh
+# → Contraseña: ghp_...tu-token...
+# Los próximos push no pedirán nada.
 ```
 
-> **Nota de seguridad:** `credential.helper store` guarda el token en texto plano en `~/.git-credentials`. Aceptable en VM privada. Si preferís más seguridad, usá `cache` (temporal en memoria).
-
-### 7.5 Ver historial de commits
+### Actualizar desde GitHub (pull)
 
 ```bash
-# En la VM:
-cd ~/linux_agent
-git log --oneline -10      # últimos 10 commits
-git status                 # cambios pendientes
-git diff                   # ver cambios sin commitear
-```
-
-### 7.6 Actualizar desde GitHub (pull)
-
-Si modificaste algo directamente en GitHub o desde otra máquina:
-
-```bash
-# En la VM:
 cd ~/linux_agent
 git pull origin main
 ```
 
+### Ver historial de cambios
+
+```bash
+git log --oneline -10      # últimos 10 commits
+git status                 # cambios sin commitear
+git diff                   # ver qué cambió
+```
+
 ---
 
-## 8. Referencia de archivos
+## 9. Referencia de archivos
 
 ```
 ~/linux_agent/
-├── main.py               # Entry point — ejecutar esto para iniciar el agente
+├── main.py               # Entry point — ejecutar para iniciar el agente
 ├── config.py             # Lee variables del .env para toda la app
 ├── tools.py              # execute_local_bash: ejecuta comandos bash
-├── setup.py              # Instalador automático (primera instalación)
-├── test_agent.py         # Suite de tests de verificación
+├── install_system.py     # Instala deps en Python del sistema (sin venv)
+├── setup.py              # Instalador automático (primera vez)
+├── test_agent.py         # Suite de tests (12 tests)
 ├── .env                  # ⚠ Configuración real (nunca subir a git)
-├── .env.example          # Plantilla del .env (sin valores reales)
+├── .env.example          # Plantilla con todos los valores posibles
 ├── .gitignore            # Archivos excluidos del repositorio
 ├── requirements.txt      # Dependencias Python del agente
-├── requirements-dev.txt  # Deps adicionales para scripts de deploy (Windows)
+├── requirements-dev.txt  # Deps de dev: paramiko (solo Windows)
 ├── lm_models.json        # Lista de modelos LM Studio guardados
+├── README.md             # Documentación pública del repo
+├── MANUAL.md             # Este manual
+├── PROJECT_CONTEXT.md    # Contexto técnico para LLMs
 │
 ├── llm/                  # Módulo de adaptadores LLM
-│   ├── base.py           # Clases abstractas: AgenteIA, RespuestaAgente
+│   ├── base.py           # Clases abstractas
 │   ├── history.py        # Historial canónico multi-API
 │   ├── router.py         # Factory + fallback automático
-│   ├── tool_registry.py  # Definición de herramientas para LLM
+│   ├── tool_registry.py  # Definición de herramientas
 │   ├── lmstudio_agent.py # Adaptador LM Studio
 │   ├── ollama_agent.py   # Adaptador Ollama
 │   ├── gemini_agent.py   # Adaptador Google Gemini
@@ -562,15 +553,73 @@ git pull origin main
 │   ├── grok_agent.py     # Adaptador Grok (xAI)
 │   └── anthropic_agent.py# Adaptador Anthropic Claude
 │
-├── deploy_to_vm.py       # [Windows] Sube archivos a la VM via SSH/SFTP
-├── github_push.py        # [Windows] Publica en GitHub via API + git
-├── run_tests_on_vm.py    # [Windows] Ejecuta tests en la VM via SSH
-└── sync.py               # [Windows] Deploy + GitHub en un solo comando
+├── deploy_to_vm.py       # [Windows] Sube archivos a VM via SSH/SFTP
+├── github_push.py        # [Windows] Publica en GitHub
+├── run_tests_on_vm.py    # [Windows] Ejecuta tests en VM via SSH
+└── sync.py               # [Windows] Deploy + Tests + GitHub en un comando
 ```
 
 ---
 
-## 9. Solución de problemas
+## 10. Solución de problemas
+
+### ❌ `python: command not found` al intentar iniciar sin venv
+
+```bash
+# Solución 1 — instalar alias de sistema:
+sudo apt install -y python-is-python3
+
+# Solución 2 — usar python3 directamente:
+python3 main.py
+
+# Solución 3 — activar el venv primero (siempre funciona):
+source ~/linux_agent/venv/bin/activate
+python main.py
+```
+
+### ❌ El modelo de LM Studio muestra "Timeout" al cargar
+
+Esto es **normal y no es un error**. Significa que el modelo tardó más de lo esperado
+en aparecer como activo, pero el agente **continúa de todas formas**.
+LM Studio cargará el modelo automáticamente cuando llegue el primer mensaje.
+
+Si querés evitar el aviso, cargá el modelo manualmente en LM Studio antes de
+iniciar el agente.
+
+### ❌ El agente se cuelga con un comando
+
+Algunos comandos no son compatibles con la ejecución no-interactiva que usa el agente:
+
+| Comando problemático | Alternativa |
+|---------------------|-------------|
+| `python` (sin args) | No aplicable — el agente no puede iniciar un REPL |
+| `vim`, `nano` | Usar `cat` para leer, `tee` para escribir |
+| `top`, `htop` | Usar `ps aux` o `ps aux --sort=-%cpu head` |
+| `less`, `more` | Usar `cat archivo \| head -50` |
+| `grep -r patrón ~/` | Agregar `--include="*.py"` y limitar scope |
+| `find / -name x` | Limitar con `find /etc -name x` o `find /home -name x` |
+| `ls -R ~/` | Usar `ls ~/linux_agent` (directorio específico) |
+
+> El agente muestra una advertencia ⚠ antes de ejecutar comandos potencialmente
+> problemáticos, pero igualmente los ejecutará con el timeout configurado.
+
+### ❌ Timeout del comando
+
+```env
+# En .env — aumentar si necesitás más tiempo:
+COMMAND_TIMEOUT=120    # 2 minutos
+COMMAND_TIMEOUT=300    # 5 minutos (para instalaciones largas)
+```
+
+### ❌ El output está truncado
+
+```env
+# En .env — aumentar el límite de caracteres al LLM:
+MAX_OUTPUT_CHARS=8000
+```
+
+> ⚠ Aumentar demasiado puede llenar el contexto del LLM y causar respuestas
+> incoherentes o cortes. Valor recomendado: entre 4000 y 8000.
 
 ### ❌ "No se puede conectar a LM Studio"
 
@@ -579,76 +628,49 @@ git pull origin main
 curl http://192.168.0.142:1234/v1/models
 
 # Si no responde:
-# 1. Verificar que LM Studio esté corriendo en la PC
-# 2. Verificar que "Serve on Local Network" esté activado en LM Studio
-# 3. Verificar que el firewall de Windows permita el puerto 1234
-#    (Panel de control → Firewall → Reglas de entrada → Puerto 1234)
+# 1. LM Studio debe estar corriendo en la PC
+# 2. Activar "Serve on Local Network" en LM Studio
+# 3. Firewall de Windows: permitir puerto 1234
+#    (Panel de control → Firewall → Reglas de entrada → Puerto 1234 TCP/UDP)
 # 4. Verificar que la IP en .env sea correcta
 ```
 
 ### ❌ "No se puede conectar a Ollama"
 
 ```bash
-# Verificar estado del servicio:
 systemctl status ollama
-
-# Iniciar si está parado:
 sudo systemctl start ollama
-
-# Ver qué modelos tiene instalados:
-ollama list
-
-# Verificar endpoint:
-curl http://localhost:11434/api/tags
+curl http://localhost:11434/api/tags     # debe listar modelos
 ```
 
-### ❌ "API Key inválida" (Gemini / OpenAI / Grok / Claude)
+### ❌ Un motor de nube no aparece en el menú
+
+Los motores de nube solo aparecen si tienen su `API_KEY` configurada y **no vacía**
+en el `.env`. Verificá:
 
 ```bash
-# Verificar que el .env tiene la key correcta:
-cat ~/linux_agent/.env | grep API_KEY
-
-# Reiniciar el agente después de editar:
-# Ctrl+C → python main.py
+grep API_KEY ~/linux_agent/.env
+# Si aparece vacío: GEMINI_API_KEY=
+# Agregá la key: GEMINI_API_KEY=AIzaSy...
 ```
 
-### ❌ El agente no aparece en el menú un motor de nube
+### ❌ El LLM no ejecuta comandos (no genera tool calls)
 
-Los motores de nube solo aparecen si tienen su `API_KEY` configurada en el `.env`. Si la key está vacía, el motor no se muestra en el menú.
+Algunos modelos locales pequeños no soportan bien function calling. Opciones:
 
-### ❌ "Timeout del comando"
+1. Usar un modelo más capaz: `Qwen2.5-Coder-32B`, `Gemma-4-27B`, `DeepSeek-Coder-6.7B`
+2. Ser más explícito: *"Ejecutá el comando `df -h` para ver el espacio en disco"*
+3. Cambiar a un motor de nube: `/switch gemini`
 
-El timeout por defecto es 30 segundos. Para comandos que tardan más (instalaciones, compilaciones):
-
-```env
-# En .env:
-COMMAND_TIMEOUT=120    # 2 minutos
-```
-
-### ❌ El LLM no genera tool calls (no ejecuta comandos)
-
-Algunos modelos locales más pequeños tienen dificultades con function calling. Soluciones:
-1. Usar un modelo más capaz en LM Studio (ej: Qwen2.5-Coder-32B)
-2. Ser más explícito en el prompt: *"Ejecutá el comando `ls -la` para listar archivos"*
-3. Cambiar a un motor de nube más confiable: `/switch gemini`
-
-### ❌ El output del comando está truncado
-
-El máximo es 4000 caracteres por defecto para no sobrecargar el contexto del LLM.
-
-```env
-MAX_OUTPUT_CHARS=8000   # aumentar si necesitás más output
-```
-
-### 🔄 Reiniciar el agente limpiamente
+### 🔄 Reiniciar el agente
 
 ```bash
-# Ctrl+C para salir
-# Luego:
-source venv/bin/activate
-python main.py
+# Ctrl+C para salir, luego:
+python main.py           # si venv está activo
+# o
+python3 main.py          # si instalaste deps en sistema
 ```
 
 ---
 
-*Manual generado para Linux Local AI Agent v1.0 — https://github.com/Juampeeh/linux-agent*
+*Manual Linux Local AI Agent v1.0.1 — https://github.com/Juampeeh/linux-agent*
