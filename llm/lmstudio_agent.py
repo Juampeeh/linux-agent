@@ -45,18 +45,12 @@ class LMStudioAgente(AgenteIA):
         return f"LM Studio [{modelo}]"
 
     def inicializar(self) -> None:
-        """Verifica conexión y carga el modelo si es necesario."""
-        if self._model_id:
-            # Intentar carga, pero nunca fallar: LM Studio carga el modelo
-            # automáticamente en el primer request de inferencia.
-            try:
-                self._cargar_modelo_si_necesario()
-            except RuntimeError as e:
-                print(f"\n  ⚠ Aviso de carga: {e}")
-                print("  → Continuando igual: LM Studio cargará el modelo al primer mensaje.")
-        else:
-            # Autodetectar modelo activo
+        """Verifica conexión. Si no hay model_id definido, autodetecta el activo."""
+        if not self._model_id:
             self._model_id = self._autodetectar_modelo()
+        # NO disparamos carga: /api/v0/models/load no funciona en LM Studio moderno.
+        # El modelo se cargará en el primer request de inferencia si está seleccionado
+        # en la UI de LM Studio, o se usará el que haya activo (ver enviar_turno).
 
     def _autodetectar_modelo(self) -> str | None:
         """
@@ -120,6 +114,11 @@ class LMStudioAgente(AgenteIA):
         for intento in range(total_reintentos):
             try:
                 respuesta = self._client.chat.completions.create(**kwargs)
+                # ✔ Éxito — si LM Studio usó un modelo distinto al solicitado, sincronizar
+                modelo_real = getattr(respuesta, "model", None)
+                if modelo_real and modelo_real != kwargs.get("model"):
+                    self._model_id = modelo_real
+                    kwargs["model"] = modelo_real
                 return self._parsear_respuesta(respuesta)
 
             except openai.APIConnectionError as e:
@@ -132,12 +131,13 @@ class LMStudioAgente(AgenteIA):
                 )
 
             except openai.BadRequestError as e:
-                # LM Studio aún no tiene el modelo cargado para inferencia.
-                # Puede pasar en el primer request mientras lo levanta en memoria.
+                # LM Studio no tiene el modelo solicitado cargado.
+                # Estrategia: esperar que cargue; a partir del 2do intento también
+                # probar con el modelo que LM Studio tenga activo en ese momento.
                 if "No models loaded" in str(e) and intento < _REINTENTOS_CARGA:
                     if not carga_avisada:
                         print(
-                            f"\n  ⏳ LM Studio está cargando el modelo — "
+                            f"\n  ⏳ LM Studio no tiene '{self._model_id}' cargado — "
                             f"esperando {_ESPERA_CARGA_S}s...",
                             flush=True,
                         )
@@ -148,12 +148,36 @@ class LMStudioAgente(AgenteIA):
                             flush=True,
                         )
                     time.sleep(_ESPERA_CARGA_S)
+
+                    # A partir del 2do intento: también intentar con cualquier
+                    # modelo activo en LM Studio (puede ser uno distinto al pedido)
+                    if intento >= 1:
+                        try:
+                            kwargs_any = {**kwargs, "model": "local-model"}
+                            resp_any = self._client.chat.completions.create(**kwargs_any)
+                            # Funcionó — LM Studio tiene algún modelo activo
+                            modelo_real = getattr(resp_any, "model", None)
+                            if modelo_real and not any(
+                                kw in modelo_real.lower() for kw in _EMBEDDING_KEYWORDS
+                            ):
+                                if modelo_real != self._model_id:
+                                    print(
+                                        f"  ℹ Modelo activo en LM Studio: {modelo_real} "
+                                        f"(el solicitado '{self._model_id}' no está cargado)",
+                                        flush=True,
+                                    )
+                                    self._model_id = modelo_real
+                                    kwargs["model"] = modelo_real
+                            return self._parsear_respuesta(resp_any)
+                        except Exception:
+                            pass  # No hay ningún modelo activo aún, seguir esperando
                     continue
-                # Si se agotaron los reintentos de carga, dar mensaje claro
+
+                # Reintentos agotados o error distinto de "No models loaded"
                 if "No models loaded" in str(e):
                     raise RuntimeError(
-                        f"LM Studio no pudo cargar el modelo '{self._model_id}'.\n"
-                        "  → Verificá que el modelo esté disponible en LM Studio UI."
+                        f"LM Studio no pudo cargar ningún modelo tras {_REINTENTOS_CARGA} intentos.\n"
+                        "  → Cargá el modelo manualmente en LM Studio UI y volvé a intentar."
                     ) from e
                 raise RuntimeError(f"Error en LM Studio: {e}") from e
 
