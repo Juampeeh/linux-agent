@@ -351,11 +351,13 @@ class NuevoAgente(AgenteIA):
 
 Cuando el usuario selecciona un modelo del menú (`lm_models.json`), `inicializar()` llama
 a `_cargar_modelo_si_necesario()`. Esta función:
-1. Verifica si el modelo ya está en `/v1/models` → si sí, retorna
-2. Intenta cargar via `/api/v0/models/load` (API nativa LM Studio >= 0.3.x)
-3. Hace polling hasta que aparezca en `/v1/models` (máx 180s)
-4. Si hay timeout o error HTTP → **lanza `RuntimeError`**, pero `inicializar()` lo captura
-   y continúa con un aviso. El agente arranca de todas formas.
+1. Verifica si el modelo ya está en `/v1/models` → si sí, retorna inmediatamente
+2. Si no está, dispara un POST a `/api/v0/models/load` (API nativa LM Studio >= 0.3.x)
+   de forma **fire-and-forget** — sin esperar respuesta ni hacer polling
+3. Retorna inmediatamente. El agente arranca sin demora.
 
-Esto evita que el usuario quede bloqueado cuando LM Studio no soporta la API de carga
-o cuando el modelo tarda más de lo esperado.
+LM Studio carga el modelo en segundo plano y lo tendrá listo en el primer request de
+inferencia. No hay mensajes de espera ni puntos de progreso en la pantalla.
+
+> **Nota:** El import `time` sigue presente en `lmstudio_agent.py` para los reintentos
+> de `enviar_turno()` en caso de `APIConnectionError`.

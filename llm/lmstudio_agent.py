@@ -67,12 +67,9 @@ class LMStudioAgente(AgenteIA):
 
     def _cargar_modelo_si_necesario(self) -> None:
         """
-        Si el modelo no está en la lista de modelos activos, intenta cargarlo
-        vía la API nativa de LM Studio (>= 0.3.x).
-
-        Si la carga tarda más de _TIMEOUT_CARGA_S o la API no está disponible,
-        lanza RuntimeError (controlado en inicializar() para ser no-fatal).
-        El modelo se cargará igualmente en el primer request de inferencia.
+        Verifica si el modelo está activo. Si no lo está, dispara la carga
+        via la API nativa de LM Studio (fire-and-forget, sin esperar).
+        LM Studio lo cargará en el primer request de inferencia de todos modos.
         """
         # ── Verificar si ya está cargado ──────────────────────────────────────
         try:
@@ -83,42 +80,15 @@ class LMStudioAgente(AgenteIA):
         except Exception:
             pass  # No se puede verificar; continuar de todos modos
 
-        # ── Intentar carga vía API nativa de LM Studio ────────────────────────
+        # ── Disparar carga (fire-and-forget, sin polling) ─────────────────────
         base = self._base_url.rstrip("/").removesuffix("/v1").rstrip("/")
         load_url = f"{base}/api/v0/models/load"
         try:
-            with httpx.Client(timeout=15) as client:
-                resp = client.post(load_url, json={"identifier": self._model_id})
-                if resp.status_code >= 400:
-                    # API nativa no disponible o modelo no existe — no fatal
-                    raise RuntimeError(
-                        f"API de carga respondió HTTP {resp.status_code} para '{self._model_id}'. "
-                        "LM Studio cargará el modelo en el primer mensaje."
-                    )
-        except httpx.ConnectError:
-            raise RuntimeError(
-                f"No se puede conectar a LM Studio en {self._base_url}. "
-                "¿Está corriendo y accesible en la red?"
-            )
-
-        # ── Polling: esperar hasta que aparezca en /v1/models ─────────────────
-        print(f"  ⏳ Esperando que LM Studio cargue '{self._model_id}'", end="", flush=True)
-        inicio = time.time()
-        while time.time() - inicio < _TIMEOUT_CARGA_S:
-            time.sleep(4)
-            print(".", end="", flush=True)
-            try:
-                modelos = self._client.models.list()
-                if self._model_id in [m.id for m in modelos.data]:
-                    print(" ✓")
-                    return
-            except Exception:
-                continue
-
-        raise RuntimeError(
-            f"El modelo '{self._model_id}' no apareció disponible en {_TIMEOUT_CARGA_S}s. "
-            "LM Studio lo cargará al primer mensaje de inferencia."
-        )
+            with httpx.Client(timeout=10) as client:
+                client.post(load_url, json={"identifier": self._model_id})
+        except Exception:
+            pass  # Si falla o no está disponible la API, LM Studio carga igual
+        # No esperamos — el modelo estará listo en el primer mensaje
 
     def enviar_turno(
         self,

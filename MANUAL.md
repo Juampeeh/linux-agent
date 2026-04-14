@@ -1,6 +1,6 @@
 # 📖 Manual de Usuario — Linux Local AI Agent
 
-> **Versión:** 1.0.1 | **Plataforma:** Ubuntu Linux (VM/físico) + Windows (desarrollo)
+> **Versión:** 1.1.0 | **Plataforma:** Ubuntu Linux (VM/físico) + Windows (desarrollo)
 > **Repositorio:** https://github.com/Juampeeh/linux-agent
 
 ---
@@ -24,7 +24,8 @@
 8. [Ejecutar sin entorno virtual (venv)](#8-ejecutar-sin-entorno-virtual-venv)
 9. [Mantener el proyecto actualizado (Git)](#9-mantener-el-proyecto-actualizado-git)
 10. [Referencia de archivos](#10-referencia-de-archivos)
-11. [Solución de problemas](#11-solución-de-problemas)
+11. [Memoria Semántica](#11-memoria-semántica)
+12. [Solución de problemas](#12-solución-de-problemas)
 
 ---
 
@@ -245,6 +246,8 @@ REQUIRE_CONFIRMATION=False   # Arranca en modo autónomo
 | `/model` | Selecciona modelo específico de LM Studio |
 | `/export` | Guarda la sesión como archivo `.md` |
 | `/clear` | Limpia el historial de conversación |
+| `/memory stats` | Muestra estadísticas de la memoria semántica |
+| `/memory clear` | Borra los recuerdos del motor actual (pide confirmación) |
 | `/ayuda` o `/help` | Tabla de ayuda |
 | `Ctrl+C` | Salir |
 
@@ -256,6 +259,8 @@ REQUIRE_CONFIRMATION=False   # Arranca en modo autónomo
 ◆ You: /switch local     # volver a LM Studio
 ◆ You: /auto             # activar modo autónomo
 ◆ You: /export           # guardar sesión como markdown
+◆ You: /memory stats     # ver cuántos recuerdos tiene el agente
+◆ You: /memory clear     # borrar todos los recuerdos del motor actual
 ```
 
 ---
@@ -283,10 +288,9 @@ nano ~/linux_agent/.env
 4. El servidor queda en `http://0.0.0.0:1234/v1`
 5. Cargar un modelo: clic en el modelo deseado → **Load**
 
-> **Sobre la carga del modelo:** cuando seleccionás un modelo del menú del agente,
-> este intenta pre-cargarlo. Si el modelo tarda más de lo esperado, el agente muestra
-> un aviso **pero continúa igual** — LM Studio lo cargará automáticamente con el primer
-> mensaje. No es un error, solo es información.
+> **Sobre la carga del modelo:** cuando seleccionás un modelo del menú, el agente
+> lo registra y LM Studio lo **carga automáticamente con el primer mensaje** que envíes.
+> No hay espera ni polling — el arranque es inmediato.
 
 #### En `.env` de la VM:
 
@@ -488,8 +492,10 @@ nano ~/linux_agent/.env
 # ── Motor local ────────────────────────────────────────────────────────────────
 LMSTUDIO_BASE_URL=http://192.168.0.142:1234/v1   # IP:puerto de LM Studio
 LMSTUDIO_MODEL=                                   # vacío = autodetectar
+LMSTUDIO_EMBED_MODEL=                             # vacío = usa el modelo activo
 OLLAMA_BASE_URL=http://localhost:11434/v1          # URL de Ollama
 OLLAMA_MODEL=llama3                                # modelo de Ollama
+OLLAMA_EMBED_MODEL=                               # vacío = usa OLLAMA_MODEL
 
 # ── APIs de nube (agregar las que uses) ───────────────────────────────────────
 GEMINI_API_KEY=                    # Google Gemini
@@ -506,6 +512,12 @@ REQUIRE_CONFIRMATION=True          # True=modo seguro | False=autónomo
 COMMAND_TIMEOUT=60                 # segundos máx por comando bash
 DEFAULT_ENGINE=local               # motor al iniciar
 MAX_OUTPUT_CHARS=4000              # límite de output enviado al LLM
+
+# ── Memoria semántica ──────────────────────────────────────────────────────────
+MEMORY_ENABLED=True                # True = activa la memoria entre sesiones
+MEMORY_TOP_K=3                     # recuerdos a inyectar por consulta
+MEMORY_THRESHOLD=0.75              # similitud mínima (0.0–1.0)
+MEMORY_MAX_ENTRIES=2000            # límite de entradas en DB
 ```
 
 > Después de editar el `.env` hay que **reiniciar el agente** (`Ctrl+C` → `python main.py`).
@@ -659,13 +671,14 @@ git diff                   # ver qué cambió
 ├── tools.py              # execute_local_bash: ejecuta comandos bash
 ├── install_system.py     # Instala deps en Python del sistema (sin venv)
 ├── setup.py              # Instalador automático (primera vez)
-├── test_agent.py         # Suite de tests (12 tests)
+├── test_agent.py         # Suite de tests (19 tests)
 ├── .env                  # ⚠ Configuración real (nunca subir a git)
 ├── .env.example          # Plantilla con todos los valores posibles
 ├── .gitignore            # Archivos excluidos del repositorio
 ├── requirements.txt      # Dependencias Python del agente
 ├── requirements-dev.txt  # Deps de dev: paramiko (solo Windows)
 ├── lm_models.json        # Lista de modelos LM Studio guardados
+├── memory.db             # ⚠ DB de memoria semántica (auto-generado, gitignored)
 ├── README.md             # Documentación pública del repo
 ├── MANUAL.md             # Este manual
 ├── PROJECT_CONTEXT.md    # Contexto técnico para LLMs
@@ -673,6 +686,7 @@ git diff                   # ver qué cambió
 ├── llm/                  # Módulo de adaptadores LLM
 │   ├── base.py           # Clases abstractas
 │   ├── history.py        # Historial canónico multi-API
+│   ├── memory.py         # Memoria semántica: SQLite + embeddings + coseno
 │   ├── router.py         # Factory + fallback automático
 │   ├── tool_registry.py  # Definición de herramientas
 │   ├── lmstudio_agent.py # Adaptador LM Studio
@@ -690,7 +704,86 @@ git diff                   # ver qué cambió
 
 ---
 
-## 11. Solución de problemas
+## 11. Memoria Semántica
+
+El agente tiene **memoria persistente entre sesiones**. Cuando ejecuta un comando bash exitoso,
+guarda un resumen en una base de datos vectorial local (`memory.db`). En sesiones futuras,
+busca recuerdos similares a la consulta actual y los inyecta como contexto para el LLM.
+
+### ¿Cómo funciona?
+
+```
+Usuario escribe: "cuánto espacio libre hay?"
+        ↓
+El agente busca en memoria: vectores similares a esa consulta
+        ↓
+Encuentra: "df -h → salida exitosa de sesión anterior"
+        ↓
+El LLM ya sabe qué comando funcionó antes → lo ejecuta directamente
+```
+
+### Panel de estado
+
+Al arrancar, el panel inicial muestra el estado de la memoria:
+
+```
+🤖 Motor: LM Studio [google/gemma-4-26b-a4b]
+🔧 Herramientas: execute_local_bash
+🔒 Modo: 🛡 MODO SEGURO (confirmación requerida)
+🧠 Memoria: ✓ activa (provider: local)
+```
+
+### Comandos de memoria
+
+```bash
+◆ You: /memory stats    # ver cuántos recuerdos hay y tamaño de la DB
+◆ You: /memory clear    # borrar todos los recuerdos del motor actual
+```
+
+### Motores con soporte de memoria
+
+| Motor | Memoria | Modelo de embeddings |
+|-------|---------|---------------------|
+| LM Studio | ✅ activa | `LMSTUDIO_EMBED_MODEL` (ej: `nomic-embed-text-v1.5`) |
+| Ollama | ✅ activa | `OLLAMA_EMBED_MODEL` o el modelo activo |
+| Google Gemini | ✅ activa | `text-embedding-004` (automático) |
+| OpenAI ChatGPT | ✅ activa | `text-embedding-3-small` (automático) |
+| Grok xAI | ❌ desactivada | Sin API de embeddings disponible |
+| Anthropic Claude | ❌ desactivada | Sin API de embeddings disponible |
+
+> **LM Studio:** Para que la memoria funcione hay que tener cargado un modelo de embeddings.
+> El recomendado (y verificado) es `nomic-embed-text-v1.5`. Configurarlo en `.env`:
+> ```env
+> LMSTUDIO_EMBED_MODEL=text-embedding-nomic-embed-text-v1.5
+> ```
+
+### Configuración avanzada
+
+```env
+MEMORY_ENABLED=True          # False = desactivar completamente
+MEMORY_TOP_K=3               # cuántos recuerdos inyectar (más = más contexto, más tokens)
+MEMORY_THRESHOLD=0.75        # similitud mínima (0.85+ = más preciso, 0.65- = más recall)
+MEMORY_MAX_ENTRIES=2000      # máximo de entradas (las más antiguas se auto-purgan)
+```
+
+### Ubicación de la base de datos
+
+```bash
+# Ver el archivo de la DB:
+ls -lh ~/linux_agent/memory.db
+
+# Hacer un backup:
+cp ~/linux_agent/memory.db ~/linux_agent/memory_backup.db
+
+# Borrar toda la memoria (equivalente a /memory clear pero directo):
+rm ~/linux_agent/memory.db
+```
+
+> `memory.db` está en `.gitignore` y **nunca se sube a GitHub**. Es personal de cada instalación.
+
+---
+
+## 12. Solución de problemas
 
 ### ❌ `python: command not found` al intentar iniciar sin venv
 
@@ -705,15 +798,6 @@ python3 main.py
 source ~/linux_agent/venv/bin/activate
 python main.py
 ```
-
-### ❌ El modelo de LM Studio muestra "Timeout" al cargar
-
-Esto es **normal y no es un error**. Significa que el modelo tardó más de lo esperado
-en aparecer como activo, pero el agente **continúa de todas formas**.
-LM Studio cargará el modelo automáticamente cuando llegue el primer mensaje.
-
-Si querés evitar el aviso, cargá el modelo manualmente en LM Studio antes de
-iniciar el agente.
 
 ### ❌ El agente se cuelga con un comando
 
@@ -791,6 +875,15 @@ Algunos modelos locales pequeños no soportan bien function calling. Opciones:
 2. Ser más explícito: *"Ejecutá el comando `df -h` para ver el espacio en disco"*
 3. Cambiar a un motor de nube: `/switch gemini`
 
+### ❌ La memoria no se activa (🧠 desactivada)
+
+1. **LM Studio/Ollama:** Asegurate de tener un modelo de embeddings cargado y configurado:
+   ```env
+   LMSTUDIO_EMBED_MODEL=text-embedding-nomic-embed-text-v1.5
+   ```
+2. **Grok/Claude:** Estos motores no tienen API de embeddings — la memoria está siempre desactivada, es esperado.
+3. **MEMORY_ENABLED=False en .env:** Ponerlo en `True`.
+
 ### 🔄 Reiniciar el agente
 
 ```bash
@@ -802,4 +895,4 @@ python3 main.py          # si instalaste deps en sistema
 
 ---
 
-*Manual Linux Local AI Agent v1.0.1 — https://github.com/Juampeeh/linux-agent*
+*Manual Linux Local AI Agent v1.1.0 — https://github.com/Juampeeh/linux-agent*
