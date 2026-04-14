@@ -13,10 +13,14 @@ from .history import HistorialCanonico
 from .tool_registry import to_openai_format
 import config as cfg
 
-_MAX_REINTENTOS   = 2
-_ESPERA_BASE_SEG  = 3
-_TIMEOUT_CARGA_S  = 180  # máx segundos esperando que LM Studio cargue un modelo
-_TIMEOUT_INFER_S  = 120  # timeout para cada llamada de inferencia (modelos grandes son lentos)
+_MAX_REINTENTOS    = 2    # reintentos por error de conexión
+_ESPERA_BASE_SEG   = 3    # segundos entre reintentos de conexión
+_REINTENTOS_CARGA  = 4    # reintentos cuando LM Studio aún está cargando el modelo
+_ESPERA_CARGA_S    = 15   # segundos entre reintentos de carga (LM Studio tarda en levantar)
+_TIMEOUT_INFER_S   = 120  # timeout para cada llamada de inferencia (modelos grandes son lentos)
+
+# Patrones que identifican modelos de embeddings (no válidos para inferencia de chat)
+_EMBEDDING_KEYWORDS = ("embed", "embedding", "nomic", "reranker", "bge-", "e5-")
 
 
 class LMStudioAgente(AgenteIA):
@@ -55,11 +59,21 @@ class LMStudioAgente(AgenteIA):
             self._model_id = self._autodetectar_modelo()
 
     def _autodetectar_modelo(self) -> str | None:
-        """Consulta /v1/models y retorna el primer modelo disponible."""
+        """
+        Consulta /v1/models y retorna el primer modelo de chat disponible.
+        Excluye modelos de embeddings que no sirven para inferencia.
+        """
         try:
             modelos = self._client.models.list()
             ids = [m.id for m in modelos.data]
-            if ids:
+            # Preferir modelos que NO sean de embeddings
+            ids_chat = [
+                mid for mid in ids
+                if not any(kw in mid.lower() for kw in _EMBEDDING_KEYWORDS)
+            ]
+            if ids_chat:
+                return ids_chat[0]
+            if ids:  # Fallback: usar el primero aunque sea (sin filtro)
                 return ids[0]
         except Exception:
             pass
@@ -67,28 +81,19 @@ class LMStudioAgente(AgenteIA):
 
     def _cargar_modelo_si_necesario(self) -> None:
         """
-        Verifica si el modelo está activo. Si no lo está, dispara la carga
-        via la API nativa de LM Studio (fire-and-forget, sin esperar).
-        LM Studio lo cargará en el primer request de inferencia de todos modos.
+        Dispara la carga del modelo vía API nativa de LM Studio (fire-and-forget).
+        NO verifica el catálogo de modelos: /v1/models lista TODOS los modelos
+        disponibles, no sólo los activos, así que no es indicador confiable de carga.
+        Si la API de carga no existe o falla, LM Studio lo cargará en el primer
+        request de inferencia (con un breve delay que se maneja en enviar_turno).
         """
-        # ── Verificar si ya está cargado ──────────────────────────────────────
-        try:
-            modelos = self._client.models.list()
-            cargados = [m.id for m in modelos.data]
-            if self._model_id in cargados:
-                return  # Ya está activo
-        except Exception:
-            pass  # No se puede verificar; continuar de todos modos
-
-        # ── Disparar carga (fire-and-forget, sin polling) ─────────────────────
         base = self._base_url.rstrip("/").removesuffix("/v1").rstrip("/")
         load_url = f"{base}/api/v0/models/load"
         try:
             with httpx.Client(timeout=10) as client:
                 client.post(load_url, json={"identifier": self._model_id})
         except Exception:
-            pass  # Si falla o no está disponible la API, LM Studio carga igual
-        # No esperamos — el modelo estará listo en el primer mensaje
+            pass  # Silencioso — el error 'No models loaded' se maneja en enviar_turno()
 
     def enviar_turno(
         self,
@@ -110,7 +115,9 @@ class LMStudioAgente(AgenteIA):
             kwargs["model"] = "local-model"  # LM Studio ignora este valor
 
         ultimo_error = None
-        for intento in range(_MAX_REINTENTOS + 1):
+        carga_avisada = False
+        total_reintentos = _MAX_REINTENTOS + _REINTENTOS_CARGA + 1
+        for intento in range(total_reintentos):
             try:
                 respuesta = self._client.chat.completions.create(**kwargs)
                 return self._parsear_respuesta(respuesta)
@@ -123,6 +130,33 @@ class LMStudioAgente(AgenteIA):
                 raise RuntimeError(
                     f"No se puede conectar a LM Studio en {self._base_url}: {e}"
                 )
+
+            except openai.BadRequestError as e:
+                # LM Studio aún no tiene el modelo cargado para inferencia.
+                # Puede pasar en el primer request mientras lo levanta en memoria.
+                if "No models loaded" in str(e) and intento < _REINTENTOS_CARGA:
+                    if not carga_avisada:
+                        print(
+                            f"\n  ⏳ LM Studio está cargando el modelo — "
+                            f"esperando {_ESPERA_CARGA_S}s...",
+                            flush=True,
+                        )
+                        carga_avisada = True
+                    else:
+                        print(
+                            f"  ⏳ Aún cargando... (intento {intento}/{_REINTENTOS_CARGA})",
+                            flush=True,
+                        )
+                    time.sleep(_ESPERA_CARGA_S)
+                    continue
+                # Si se agotaron los reintentos de carga, dar mensaje claro
+                if "No models loaded" in str(e):
+                    raise RuntimeError(
+                        f"LM Studio no pudo cargar el modelo '{self._model_id}'.\n"
+                        "  → Verificá que el modelo esté disponible en LM Studio UI."
+                    ) from e
+                raise RuntimeError(f"Error en LM Studio: {e}") from e
+
             except Exception as e:
                 raise RuntimeError(f"Error en LM Studio: {e}") from e
 
