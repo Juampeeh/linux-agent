@@ -23,6 +23,7 @@ import config as cfg
 from llm.router import crear_agente, motores_disponibles, intentar_fallback_local
 from llm.history import HistorialCanonico
 from llm.tool_registry import HERRAMIENTAS, SYSTEM_PROMPT
+from llm.memory import crear_memoria, formatear_contexto_memoria
 from tools import ejecutar_bash
 
 console = Console()
@@ -194,6 +195,8 @@ def _cmd_ayuda() -> bool:
         ("/model",          "Selecciona modelo LM Studio (solo motor 'local')"),
         ("/export",         "Guarda la sesión actual como archivo .md"),
         ("/clear",          "Limpia el historial de conversación"),
+        ("/memory stats",   "Muestra estadísticas de la memoria semántica"),
+        ("/memory clear",   "Borra todas las memorias del motor actual (con confirmación)"),
         ("/ayuda",          "Muestra esta pantalla de ayuda"),
         ("/help",           "Alias de /ayuda"),
         ("Ctrl+C",          "Sale del agente"),
@@ -250,8 +253,16 @@ def bucle_agente(motor_inicial: str, model_id_inicial: str | None) -> None:
     # ── Historial ─────────────────────────────────────────────────────────────
     historial = HistorialCanonico(system_prompt=SYSTEM_PROMPT)
 
+    # ── Memoria semántica ─────────────────────────────────────────────────────
+    console.print(f"  ⚙ Iniciando memoria semántica...", end=" ")
+    memoria = crear_memoria(motor_actual)
+    if memoria.activa:
+        console.print(f"[green]✓[/] [dim](provider: {memoria._provider})[/dim]")
+    else:
+        console.print("[yellow]desactivada[/] [dim](motor sin soporte de embeddings o MEMORY_ENABLED=False)[/dim]")
+
     # ── Mostrar estado inicial ────────────────────────────────────────────────
-    _mostrar_estado(agente, require_confirmation)
+    _mostrar_estado(agente, require_confirmation, memoria)
 
     console.print(
         Panel(
@@ -272,6 +283,7 @@ def bucle_agente(motor_inicial: str, model_id_inicial: str | None) -> None:
             ).strip()
         except (KeyboardInterrupt, EOFError):
             console.print("\n\n[cyan]  Hasta luego. 👋[/cyan]\n")
+            memoria.cerrar()
             break
 
         if not user_input:
@@ -310,6 +322,11 @@ def bucle_agente(motor_inicial: str, model_id_inicial: str | None) -> None:
             if agente_nuevo:
                 agente       = agente_nuevo
                 motor_actual = motor_actual_nuevo
+                # Reiniciar memoria con el nuevo motor
+                memoria.cerrar()
+                memoria = crear_memoria(motor_actual)
+                estado_mem = "[green]✓[/]" if memoria.activa else "[yellow]desactivada[/]"
+                console.print(f"  🧠 Memoria: {estado_mem}")
             continue
 
         if cmd == "/model" and motor_actual == "local":
@@ -333,12 +350,30 @@ def bucle_agente(motor_inicial: str, model_id_inicial: str | None) -> None:
             console.print("[green]  ✓ Historial limpiado.[/]")
             continue
 
+        if cmd == "/memory stats":
+            _cmd_memory_stats(memoria)
+            continue
+
+        if cmd == "/memory clear":
+            _cmd_memory_clear(memoria)
+            continue
+
+        # ── Inyección de contexto de memoria ──────────────────────────────────
+        # Buscar recuerdos relevantes y anteponer al mensaje del usuario
+        texto_para_llm = user_input
+        if memoria.activa:
+            recuerdos = memoria.buscar(user_input)
+            if recuerdos:
+                bloque_memoria = formatear_contexto_memoria(recuerdos)
+                texto_para_llm = f"{bloque_memoria}\n\n{user_input}"
+                console.print(f"  [dim]🧠 {len(recuerdos)} recuerdo(s) relevante(s) inyectado(s).[/dim]")
+
         # ── Enviar mensaje al LLM ──────────────────────────────────────────────
-        historial.agregar_usuario(user_input)
+        historial.agregar_usuario(texto_para_llm)
         console.print()
 
         try:
-            _procesar_turno(agente, historial, require_confirmation)
+            _procesar_turno(agente, historial, require_confirmation, memoria)
         except Exception as e:
             console.print(f"[bold red]  ✗ Error del agente:[/] {e}")
             # Intentar fallback
@@ -347,6 +382,8 @@ def bucle_agente(motor_inicial: str, model_id_inicial: str | None) -> None:
             if fallback:
                 agente = fallback
                 motor_actual = "local"
+                memoria.cerrar()
+                memoria = crear_memoria(motor_actual)
                 console.print("[green]  ✓ Cambiado a LM Studio.[/]")
             else:
                 console.print("[red]  ✗ Fallback fallido. Verificá la conexión.[/]")
@@ -354,10 +391,16 @@ def bucle_agente(motor_inicial: str, model_id_inicial: str | None) -> None:
         console.print()
 
 
-def _procesar_turno(agente, historial: HistorialCanonico, require_confirmation: bool) -> None:
+def _procesar_turno(
+    agente,
+    historial: HistorialCanonico,
+    require_confirmation: bool,
+    memoria=None,
+) -> None:
     """
     Bucle de razonamiento: envía al LLM, procesa tool calls, itera.
     Hasta MAX_ITERACIONES iteraciones para evitar loops.
+    El parámetro 'memoria' es opcional para compatibilidad con tests existentes.
     """
     for iteracion in range(MAX_ITERACIONES):
         respuesta = agente.enviar_turno(historial, HERRAMIENTAS)
@@ -410,6 +453,13 @@ def _procesar_turno(agente, historial: HistorialCanonico, require_confirmation: 
                 resultado=resultado,
             )
 
+            # ── Guardar aprendizaje en memoria (no bloquea si falla) ──────────
+            if memoria is not None:
+                try:
+                    memoria.guardar_si_exitoso(tc.nombre, tc.argumentos, resultado)
+                except Exception:
+                    pass  # La memoria nunca rompe el flujo principal
+
     # Si llegamos aquí, se agotaron las iteraciones
     console.print(
         f"[yellow]  ⚠ Se alcanzó el límite de {MAX_ITERACIONES} iteraciones.[/yellow]"
@@ -440,22 +490,80 @@ def _switch_motor(nuevo_motor: str, agente_actual, motor_actual: str):
         return None, motor_actual
 
 
-def _mostrar_estado(agente, require_confirmation: bool) -> None:
+def _mostrar_estado(agente, require_confirmation: bool, memoria=None) -> None:
     """Muestra el panel de estado del agente."""
     modo = (
         "[bold red]🛡 MODO SEGURO[/bold red] (confirmación requerida)"
         if require_confirmation
         else "[bold yellow]⚠ MODO AUTÓNOMO[/bold yellow] (sin confirmación)"
     )
+    if memoria is not None and memoria.activa:
+        mem_info = f"[green]✓ activa[/green] [dim](provider: {memoria._provider})[/dim]"
+    elif memoria is not None:
+        mem_info = "[yellow]desactivada[/yellow] [dim](motor sin soporte)[/dim]"
+    else:
+        mem_info = "[dim]no disponible[/dim]"
+
     console.print(
         Panel(
             f"🤖 Motor: [bold cyan]{agente.nombre_motor}[/bold cyan]\n"
             f"🔧 Herramientas: execute_local_bash\n"
-            f"🔒 Modo: {modo}",
+            f"🔒 Modo: {modo}\n"
+            f"🧠 Memoria: {mem_info}",
             title="[bold]Estado del Agente[/]",
             border_style="blue",
         )
     )
+
+
+def _cmd_memory_stats(memoria) -> None:
+    """Muestra estadísticas de la memoria semántica."""
+    stats = memoria.stats()
+    if not stats.get("activa"):
+        console.print(
+            Panel(
+                f"[yellow]Memoria desactivada[/yellow]\n[dim]{stats.get('razon', '')}[/dim]",
+                title="[bold]🧠 Memoria Semántica[/]",
+                border_style="yellow",
+            )
+        )
+        return
+
+    por_tipo_str = "\n".join(
+        f"  • {tipo}: [cyan]{cnt}[/cyan]"
+        for tipo, cnt in stats.get("por_tipo", {}).items()
+    ) or "  [dim](sin entradas aún)[/dim]"
+
+    console.print(
+        Panel(
+            f"[green]Activa[/green] — provider: [cyan]{stats['provider']}[/cyan]\n"
+            f"Total de recuerdos: [bold]{stats['total']}[/bold] / {stats['max_entries']}\n"
+            f"Por tipo:\n{por_tipo_str}\n"
+            f"Archivo: [dim]{stats['db_path']}[/dim] ({stats.get('db_size_kb', 0)} KB)",
+            title="[bold]🧠 Memoria Semántica[/]",
+            border_style="cyan",
+        )
+    )
+
+
+def _cmd_memory_clear(memoria) -> None:
+    """Borra todas las memorias del proveedor actual (con confirmación)."""
+    if not memoria.activa:
+        console.print("[yellow]  ⚠ La memoria no está activa.[/yellow]")
+        return
+    try:
+        confirm = Prompt.ask(
+            "  [bold red]¿Borrar TODAS las memorias del provider actual?[/bold red] [dim](s/N)[/dim]",
+            console=console,
+        ).strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        console.print("  [dim]Cancelado.[/dim]")
+        return
+    if confirm in ("s", "si", "sí", "y", "yes"):
+        eliminadas = memoria.limpiar()
+        console.print(f"[green]  ✓ {eliminadas} recuerdo(s) eliminado(s).[/green]")
+    else:
+        console.print("  [dim]Cancelado.[/dim]")
 
 
 def _exportar_sesion(historial: HistorialCanonico) -> None:

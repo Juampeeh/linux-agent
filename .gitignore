@@ -34,3 +34,5 @@ build/
 
 # Windows
 Thumbs.db
+
+memory.db

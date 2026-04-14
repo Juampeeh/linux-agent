@@ -12,13 +12,15 @@ _BASE_DIR = Path(__file__).parent.resolve()
 load_dotenv(_BASE_DIR / ".env")
 
 # ── LM Studio ─────────────────────────────────────────────────────────────────
-LMSTUDIO_BASE_URL: str = os.getenv("LMSTUDIO_BASE_URL", "http://192.168.0.142:1234/v1")
-LMSTUDIO_MODEL: str    = os.getenv("LMSTUDIO_MODEL", "")
-LM_MODELS_FILE: str    = str(_BASE_DIR / "lm_models.json")
+LMSTUDIO_BASE_URL: str   = os.getenv("LMSTUDIO_BASE_URL", "http://192.168.0.142:1234/v1")
+LMSTUDIO_MODEL: str      = os.getenv("LMSTUDIO_MODEL", "")
+LMSTUDIO_EMBED_MODEL: str = os.getenv("LMSTUDIO_EMBED_MODEL", "")  # vacío = usa el modelo activo
+LM_MODELS_FILE: str      = str(_BASE_DIR / "lm_models.json")
 
 # ── Ollama ────────────────────────────────────────────────────────────────────
-OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-OLLAMA_MODEL: str    = os.getenv("OLLAMA_MODEL", "llama3")
+OLLAMA_BASE_URL: str    = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+OLLAMA_MODEL: str       = os.getenv("OLLAMA_MODEL", "llama3")
+OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "")  # vacío = usa OLLAMA_MODEL
 
 # ── Google Gemini ─────────────────────────────────────────────────────────────
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
@@ -41,6 +43,13 @@ REQUIRE_CONFIRMATION: bool = os.getenv("REQUIRE_CONFIRMATION", "True").lower() i
 COMMAND_TIMEOUT: int       = int(os.getenv("COMMAND_TIMEOUT", "60"))
 DEFAULT_ENGINE: str        = os.getenv("DEFAULT_ENGINE", "local")
 MAX_OUTPUT_CHARS: int      = int(os.getenv("MAX_OUTPUT_CHARS", "4000"))
+
+# ── Memoria semántica ─────────────────────────────────────────────────────────
+MEMORY_ENABLED: bool    = os.getenv("MEMORY_ENABLED", "True").lower() in ("true", "1", "yes")
+MEMORY_DB_PATH: str     = str(_BASE_DIR / "memory.db")
+MEMORY_TOP_K: int       = int(os.getenv("MEMORY_TOP_K", "3"))
+MEMORY_THRESHOLD: float = float(os.getenv("MEMORY_THRESHOLD", "0.75"))
+MEMORY_MAX_ENTRIES: int = int(os.getenv("MEMORY_MAX_ENTRIES", "2000"))
 
 # ── Registro de motores disponibles ──────────────────────────────────────────
 MOTORES_DISPONIBLES: dict[str, dict] = {
