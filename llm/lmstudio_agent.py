@@ -187,8 +187,16 @@ class LMStudioAgente(AgenteIA):
     def _parsear_respuesta(self, respuesta) -> RespuestaAgente:
         mensaje = respuesta.choices[0].message
 
+        # Algunos modelos "thinking" (Nemotron, Gemma, DeepSeek-R1) ponen la
+        # respuesta en reasoning_content y dejan content vacío. Usamos el que
+        # tenga contenido; priorizamos content si ambos están presentes.
+        content    = (mensaje.content or "").strip()
+        reasoning  = getattr(mensaje, "reasoning_content", None) or ""
+        reasoning  = reasoning.strip()
+        texto = content or reasoning  # content tiene prioridad; fallback a reasoning
+
         if not mensaje.tool_calls:
-            return RespuestaAgente(texto=mensaje.content or "")
+            return RespuestaAgente(texto=texto)
 
         tool_calls = []
         for tc in mensaje.tool_calls:
@@ -205,6 +213,6 @@ class LMStudioAgente(AgenteIA):
             )
 
         return RespuestaAgente(
-            texto=mensaje.content or "",
+            texto=texto,
             tool_calls=tool_calls,
         )
