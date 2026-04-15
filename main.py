@@ -417,6 +417,20 @@ def _procesar_turno(
                 )
                 # Registrar respuesta en historial
                 historial.agregar_asistente(respuesta.texto)
+
+                # Guardar respuesta en memoria para recall en sesiones futuras.
+                # Solo respuestas sustanciales (> 80 chars) para evitar guardar
+                # saludos o confirmaciones cortas. Capado a 1500 chars.
+                if memoria is not None and memoria.activa:
+                    texto_memoria = respuesta.texto.strip()[:1500]
+                    if len(texto_memoria) > 80:
+                        try:
+                            memoria.guardar(
+                                contenido=texto_memoria,
+                                tipo="respuesta_agente",
+                            )
+                        except Exception:
+                            pass  # La memoria nunca rompe el flujo principal
             return
 
         # ── Con tool calls: procesar cada una ────────────────────────────────
