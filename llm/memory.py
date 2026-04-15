@@ -36,6 +36,8 @@ except ImportError:
 # ── Mapa motor → proveedor de embeddings ─────────────────────────────────────
 # Motores en el mismo grupo comparten namespace (sus vectores son comparables).
 # None = motor sin API de embeddings → memoria desactivada para esa sesión.
+# Con MEMORY_SHARED_EMBED=True todos los motores usan el namespace 'local'
+# (LM Studio) para que la memoria sea compartida entre todos los agentes.
 _PROVIDER_MAP: dict[str, str | None] = {
     "local":   "local",   # LM Studio  → /v1/embeddings OpenAI-compat
     "ollama":  "local",   # Ollama     → mismo namespace que LM Studio
@@ -88,7 +90,17 @@ class MemoriaSemantica:
         self._api_key   = api_key
         self._model_id  = model_id
         self._db_path   = db_path or cfg.MEMORY_DB_PATH
-        self._provider  = _PROVIDER_MAP.get(motor_key)  # None → sin soporte
+
+        # MEMORY_SHARED_EMBED: redirige todos los motores a LM Studio para
+        # embeddings, unificando el namespace vectorial entre todos los agentes.
+        if cfg.MEMORY_SHARED_EMBED and motor_key not in ("local", "ollama"):
+            self._provider = "local"
+            self._base_url = cfg.LMSTUDIO_BASE_URL
+            self._model_id = cfg.LMSTUDIO_EMBED_MODEL or None
+            logger.debug(f"[Memoria] MEMORY_SHARED_EMBED activo: {motor_key} → LM Studio embeddings")
+        else:
+            self._provider = _PROVIDER_MAP.get(motor_key)  # None → sin soporte
+
         self._conn: sqlite3.Connection | None = None
 
         # La memoria está activa solo si:

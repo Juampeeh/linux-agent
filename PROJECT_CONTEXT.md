@@ -328,36 +328,40 @@ class NuevoAgente(AgenteIA):
 
 ---
 
-## Estado actual (Abril 2026)
+## Estado actual (Abril 2026 — v1.2)
 
 - ✅ **19/19 tests** pasando en VM `192.168.0.162`
 - ✅ **LM Studio** conectado en `192.168.0.142:1234` con 14+ modelos disponibles
-- ✅ **Tool Call E2E** verificado con `google/gemma-4-26b-a4b`
 - ✅ **GitHub** publicado: https://github.com/Juampeeh/linux-agent
-- ✅ **`COMMAND_TIMEOUT` = 60s** (subido de 30s)
-- ✅ **Carga de modelo LM Studio no-fatal** — si el modelo tarda en cargar, el agente
-  continúa y LM Studio lo carga en el primer request de inferencia
-- ✅ **`_TIMEOUT_INFER_S` = 120s** — timeout del cliente OpenAI para modelos grandes
-- ✅ **`install_system.py`** — instala deps en Python del sistema (sin venv)
-- ✅ **Detección de comandos interactivos** en `tools.py` — avisa antes de ejecutar
-  comandos que pueden bloquearse (`vim`, `grep -r ~/`, `ls -R ~/`, etc.)
-- ✅ **Memoria Semántica Persistente** — `llm/memory.py` con SQLite + coseno + embeddings
-  vía API de LM Studio (`text-embedding-nomic-embed-text-v1.5`, 768 dims). La memoria
-  se inyecta silenciosamente como contexto en cada consulta y se guarda tras cada tool call exitoso.
-- ⬜ Ollama en VM no instalado (no se probó aún)
-- ⬜ APIs de nube (Gemini/Grok/OpenAI/Claude) configurables pero no testeadas en esta VM
+- ✅ **Cambio de motor en caliente**: `/switch <motor>` y `/model` funcionan mid-session
+- ✅ **Historial de comandos ↑↓**: `readline` + `~/.linux_agent_history` persistente entre sesiones
+- ✅ **Memoria Semántica v1.2**: guarda pares Q&A (`tipo="respuesta_agente"`) para recall
+  semántico entre sesiones, no solo comandos bash exitosos
+- ✅ **`MEMORY_SHARED_EMBED`**: opción para que todos los motores usen LM Studio para embeddings
+  y compartan el mismo namespace vectorial "local"
+- ✅ **Fallback dinámico LM Studio**: si el modelo pedido no carga, usa el que esté activo
+- ✅ **`reasoning_content` fallback**: modelos "thinking" (Gemma, Nemotron, DeepSeek-R1)
+  que retornan `content=''` ahora muestran su respuesta desde `reasoning_content`
+- ✅ **Autodetect embedding filter**: `_autodetectar_modelo()` nunca selecciona modelos
+  de embeddings como motor de chat
+- ✅ **`COMMAND_TIMEOUT` = 60s** y **`_TIMEOUT_INFER_S` = 120s** para modelos grandes
+- ✅ **Detección de comandos interactivos** en `tools.py`
+- ⬜ Ollama en VM no instalado (no probado aún)
+- ⬜ APIs cloud (Gemini/Grok/OpenAI/Claude) configurables pero no testeadas en esta VM
 
-## Comportamiento LM Studio — carga de modelos
+---
 
-Cuando el usuario selecciona un modelo del menú (`lm_models.json`), `inicializar()` llama
-a `_cargar_modelo_si_necesario()`. Esta función:
-1. Verifica si el modelo ya está en `/v1/models` → si sí, retorna inmediatamente
-2. Si no está, dispara un POST a `/api/v0/models/load` (API nativa LM Studio >= 0.3.x)
-   de forma **fire-and-forget** — sin esperar respuesta ni hacer polling
-3. Retorna inmediatamente. El agente arranca sin demora.
+## Comportamiento LM Studio — carga de modelos (v1.2)
 
-LM Studio carga el modelo en segundo plano y lo tendrá listo en el primer request de
-inferencia. No hay mensajes de espera ni puntos de progreso en la pantalla.
+`/api/v0/models/load` **no funciona** en la versión actual de LM Studio (retorna 200 sin efecto).
+`inicializar()` ya **no** dispara esta llamada. Flujo real cuando el usuario envía un mensaje:
 
-> **Nota:** El import `time` sigue presente en `lmstudio_agent.py` para los reintentos
-> de `enviar_turno()` en caso de `APIConnectionError`.
+1. `enviar_turno()` envía el request con el `model_id` seleccionado
+2. Si LM Studio responde OK → retorna la respuesta. Sincroniza `self._model_id` si el modelo real difiere.
+3. Si LM Studio retorna `BadRequestError: "No models loaded"`:
+   - **Intento 0**: muestra `⏳ LM Studio no tiene 'X' cargado — esperando 15s...` y espera
+   - **Intento ≥1**: además prueba con `model="local-model"` (cualquier modelo activo en LM Studio).
+     Si responde con otro modelo: muestra `ℹ Modelo activo en LM Studio: qwen/...` y usa ese.
+4. Tras `_REINTENTOS_CARGA=4` intentos (~60s): `RuntimeError` con mensaje claro al usuario.
+
+> **Nota:** El import `time` sigue presente en `lmstudio_agent.py` para los sleeps de reintento.

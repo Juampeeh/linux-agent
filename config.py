@@ -45,11 +45,16 @@ DEFAULT_ENGINE: str        = os.getenv("DEFAULT_ENGINE", "local")
 MAX_OUTPUT_CHARS: int      = int(os.getenv("MAX_OUTPUT_CHARS", "4000"))
 
 # ── Memoria semántica ─────────────────────────────────────────────────────────
-MEMORY_ENABLED: bool    = os.getenv("MEMORY_ENABLED", "True").lower() in ("true", "1", "yes")
-MEMORY_DB_PATH: str     = str(_BASE_DIR / "memory.db")
-MEMORY_TOP_K: int       = int(os.getenv("MEMORY_TOP_K", "3"))
-MEMORY_THRESHOLD: float = float(os.getenv("MEMORY_THRESHOLD", "0.75"))
-MEMORY_MAX_ENTRIES: int = int(os.getenv("MEMORY_MAX_ENTRIES", "2000"))
+MEMORY_ENABLED: bool       = os.getenv("MEMORY_ENABLED", "True").lower() in ("true", "1", "yes")
+MEMORY_DB_PATH: str        = str(_BASE_DIR / "memory.db")
+MEMORY_TOP_K: int          = int(os.getenv("MEMORY_TOP_K", "3"))
+MEMORY_THRESHOLD: float    = float(os.getenv("MEMORY_THRESHOLD", "0.75"))
+MEMORY_MAX_ENTRIES: int    = int(os.getenv("MEMORY_MAX_ENTRIES", "2000"))
+# MEMORY_SHARED_EMBED=True obliga a TODOS los motores a usar LM Studio para embeddings.
+# Esto unifica el namespace vectorial entre LM Studio, Gemini, OpenAI, etc.
+# Requiere que LM Studio esté corriendo aunque se use otro motor como LLM.
+MEMORY_SHARED_EMBED: bool  = os.getenv("MEMORY_SHARED_EMBED", "False").lower() in ("true", "1", "yes")
+
 
 # ── Registro de motores disponibles ──────────────────────────────────────────
 MOTORES_DISPONIBLES: dict[str, dict] = {

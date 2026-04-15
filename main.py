@@ -11,6 +11,21 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+# Historial de comandos con flechas ↑↓ (readline, disponible en Linux/Mac)
+# Se carga al inicio y se guarda al salir automáticamente.
+try:
+    import readline as _rl
+    import atexit as _atexit
+    _HIST_FILE = Path.home() / ".linux_agent_history"
+    try:
+        _rl.read_history_file(str(_HIST_FILE))
+    except FileNotFoundError:
+        pass
+    _rl.set_history_length(500)
+    _atexit.register(_rl.write_history_file, str(_HIST_FILE))
+except ImportError:
+    pass  # Windows sin pyreadline3 — degradación silenciosa
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text

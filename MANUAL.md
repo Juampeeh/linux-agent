@@ -1,6 +1,6 @@
 # 📖 Manual de Usuario — Linux Local AI Agent
 
-> **Versión:** 1.1.0 | **Plataforma:** Ubuntu Linux (VM/físico) + Windows (desarrollo)
+> **Versión:** 1.2.0 | **Plataforma:** Ubuntu Linux (VM/físico) + Windows (desarrollo)
 > **Repositorio:** https://github.com/Juampeeh/linux-agent
 
 ---
@@ -197,6 +197,9 @@ python main.py
 > **Nota:** Solo aparecen en el menú los motores con su `API_KEY` configurada.
 > LM Studio y Ollama siempre aparecen (no necesitan API key).
 
+> **Flechas ↑↓:** Podés usar las flechas del teclado para navegar por el historial
+> de comandos de la sesión y sesiones anteriores (guardado en `~/.linux_agent_history`).
+
 ---
 
 ## 3. Modo seguro vs. modo autónomo
@@ -241,7 +244,7 @@ REQUIRE_CONFIRMATION=False   # Arranca en modo autónomo
 |---------|-------------|
 | `/auto` | Toggle modo autónomo ↔ seguro |
 | `/confirm` | Alias de `/auto` |
-| `/switch <motor>` | Cambia el motor de IA en caliente |
+| `/switch <motor>` | Cambia el motor de IA en caliente (sin reiniciar) |
 | `/engines` | Lista motores disponibles y activo |
 | `/model` | Selecciona modelo específico de LM Studio |
 | `/export` | Guarda la sesión como archivo `.md` |
@@ -250,6 +253,7 @@ REQUIRE_CONFIRMATION=False   # Arranca en modo autónomo
 | `/memory clear` | Borra los recuerdos del motor actual (pide confirmación) |
 | `/ayuda` o `/help` | Tabla de ayuda |
 | `Ctrl+C` | Salir |
+| `↑ / ↓` | Navegar historial de comandos (cross-sesión vía readline) |
 
 ### Ejemplos
 
@@ -257,6 +261,7 @@ REQUIRE_CONFIRMATION=False   # Arranca en modo autónomo
 ◆ You: /engines          # ver qué motores están disponibles
 ◆ You: /switch gemini    # cambiar a Gemini sin reiniciar
 ◆ You: /switch local     # volver a LM Studio
+◆ You: /model            # cambiar modelo de LM Studio en caliente
 ◆ You: /auto             # activar modo autónomo
 ◆ You: /export           # guardar sesión como markdown
 ◆ You: /memory stats     # ver cuántos recuerdos tiene el agente
@@ -288,9 +293,10 @@ nano ~/linux_agent/.env
 4. El servidor queda en `http://0.0.0.0:1234/v1`
 5. Cargar un modelo: clic en el modelo deseado → **Load**
 
-> **Sobre la carga del modelo:** cuando seleccionás un modelo del menú, el agente
-> lo registra y LM Studio lo **carga automáticamente con el primer mensaje** que envíes.
-> No hay espera ni polling — el arranque es inmediato.
+> **Sobre la carga del modelo:** el agente registra el modelo seleccionado y lo envía
+> en el primer request al LLM. Si el modelo no está cargado en LM Studio, el agente
+> espera hasta 60s con reintentos. Si otro modelo está activo, lo detecta y lo usa
+> automáticamente mostrando un aviso. El arranque es siempre inmediato.
 
 #### En `.env` de la VM:
 
@@ -706,21 +712,34 @@ git diff                   # ver qué cambió
 
 ## 11. Memoria Semántica
 
-El agente tiene **memoria persistente entre sesiones**. Cuando ejecuta un comando bash exitoso,
-guarda un resumen en una base de datos vectorial local (`memory.db`). En sesiones futuras,
-busca recuerdos similares a la consulta actual y los inyecta como contexto para el LLM.
+El agente tiene **memoria persistente entre sesiones**. Guarda pares de pregunta+respuesta
+en una base de datos vectorial local (`memory.db`). En sesiones futuras, busca recuerdos
+similares a la consulta actual y los inyecta como contexto para el LLM.
 
 ### ¿Cómo funciona?
 
 ```
-Usuario escribe: "cuánto espacio libre hay?"
+Usuario escribe: "recordas la IP de Webmin?"
         ↓
-El agente busca en memoria: vectores similares a esa consulta
+El agente vectoriza esa consulta con el modelo de embeddings
         ↓
-Encuentra: "df -h → salida exitosa de sesión anterior"
+Busca en memory.db los vectores más similares
         ↓
-El LLM ya sabe qué comando funcionó antes → lo ejecuta directamente
+Encuentra: "P: ¿en qué IP está Webmin?\nR: 192.168.0.162 puerto 10000"
+        ↓
+Inyecta ese contexto → el LLM responde con la IP real sin necesidad de buscarla de nuevo
 ```
+
+### Qué se guarda en memoria
+
+| Tipo | Qué guarda | Cuándo |
+|------|-----------|--------|
+| `respuesta_agente` | Par Q&A: pregunta del usuario + respuesta del agente (> 80 chars) | Al terminar cada respuesta |
+| `comando_exitoso` | Comando bash exitoso + primeras líneas del output | Tras cada `execute_local_bash` con exit_code 0 |
+
+> **Formato Q&A:** guardar la pregunta junto con la respuesta hace que futuros queries
+> similares a la pregunta original, O relacionados con el contenido de la respuesta,
+> encuentren el recuerdo con alta similitud semántica.
 
 ### Panel de estado
 
@@ -733,6 +752,11 @@ Al arrancar, el panel inicial muestra el estado de la memoria:
 🧠 Memoria: ✓ activa (provider: local)
 ```
 
+Cuando un recuerdo es inyectado se muestra brevemente:
+```
+  🧠 1 recuerdo(s) relevante(s) inyectado(s).
+```
+
 ### Comandos de memoria
 
 ```bash
@@ -742,20 +766,35 @@ Al arrancar, el panel inicial muestra el estado de la memoria:
 
 ### Motores con soporte de memoria
 
-| Motor | Memoria | Modelo de embeddings |
-|-------|---------|---------------------|
-| LM Studio | ✅ activa | `LMSTUDIO_EMBED_MODEL` (ej: `nomic-embed-text-v1.5`) |
-| Ollama | ✅ activa | `OLLAMA_EMBED_MODEL` o el modelo activo |
-| Google Gemini | ✅ activa | `text-embedding-004` (automático) |
-| OpenAI ChatGPT | ✅ activa | `text-embedding-3-small` (automático) |
-| Grok xAI | ❌ desactivada | Sin API de embeddings disponible |
-| Anthropic Claude | ❌ desactivada | Sin API de embeddings disponible |
+| Motor | Memoria | Namespace | Modelo de embeddings |
+|-------|---------|-----------|---------------------|
+| LM Studio | ✅ activa | `local` | `LMSTUDIO_EMBED_MODEL` (ej: `nomic-embed-text-v1.5`) |
+| Ollama | ✅ activa | `local` | `OLLAMA_EMBED_MODEL` o el modelo activo |
+| Google Gemini | ✅ activa | `gemini` | `text-embedding-004` (automático) |
+| OpenAI ChatGPT | ✅ activa | `openai` | `text-embedding-3-small` (automático) |
+| Grok xAI | ❌ desactivada | — | Sin API de embeddings disponible |
+| Anthropic Claude | ❌ desactivada | — | Sin API de embeddings disponible |
+
+> **LM Studio y Ollama comparten el namespace `local`** — sus recuerdos son mutuamente
+> accesibles. Gemini y OpenAI tienen namespaces separados porque sus modelos de
+> embeddings generan vectores en espacios matemáticamente distintos.
 
 > **LM Studio:** Para que la memoria funcione hay que tener cargado un modelo de embeddings.
 > El recomendado (y verificado) es `nomic-embed-text-v1.5`. Configurarlo en `.env`:
 > ```env
 > LMSTUDIO_EMBED_MODEL=text-embedding-nomic-embed-text-v1.5
 > ```
+
+### Memoria compartida entre TODOS los motores
+
+Si querés que Gemini, OpenAI, etc. compartan recuerdos con LM Studio:
+
+```env
+# En .env:
+MEMORY_SHARED_EMBED=True   # Todos los motores usan LM Studio para embeddings
+```
+
+> ⚠️ Requiere que LM Studio esté corriendo aunque uses un motor cloud.
 
 ### Configuración avanzada
 
@@ -764,6 +803,7 @@ MEMORY_ENABLED=True          # False = desactivar completamente
 MEMORY_TOP_K=3               # cuántos recuerdos inyectar (más = más contexto, más tokens)
 MEMORY_THRESHOLD=0.75        # similitud mínima (0.85+ = más preciso, 0.65- = más recall)
 MEMORY_MAX_ENTRIES=2000      # máximo de entradas (las más antiguas se auto-purgan)
+MEMORY_SHARED_EMBED=False    # True = namespace único para todos los motores
 ```
 
 ### Ubicación de la base de datos
@@ -780,6 +820,7 @@ rm ~/linux_agent/memory.db
 ```
 
 > `memory.db` está en `.gitignore` y **nunca se sube a GitHub**. Es personal de cada instalación.
+
 
 ---
 
