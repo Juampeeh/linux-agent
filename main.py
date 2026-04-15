@@ -373,7 +373,7 @@ def bucle_agente(motor_inicial: str, model_id_inicial: str | None) -> None:
         console.print()
 
         try:
-            _procesar_turno(agente, historial, require_confirmation, memoria)
+            _procesar_turno(agente, historial, require_confirmation, memoria, user_input)
         except Exception as e:
             console.print(f"[bold red]  ✗ Error del agente:[/] {e}")
             # Intentar fallback
@@ -396,6 +396,7 @@ def _procesar_turno(
     historial: HistorialCanonico,
     require_confirmation: bool,
     memoria=None,
+    pregunta_usuario: str = "",
 ) -> None:
     """
     Bucle de razonamiento: envía al LLM, procesa tool calls, itera.
@@ -418,15 +419,21 @@ def _procesar_turno(
                 # Registrar respuesta en historial
                 historial.agregar_asistente(respuesta.texto)
 
-                # Guardar respuesta en memoria para recall en sesiones futuras.
-                # Solo respuestas sustanciales (> 80 chars) para evitar guardar
-                # saludos o confirmaciones cortas. Capado a 1500 chars.
+                # Guardar en memoria como par Q&A para recall en sesiones futuras.
+                # El par Q&A es semánticamente más rico que solo la respuesta:
+                # incluye la pregunta original + la respuesta con todos los datos.
+                # Solo respuestas sustanciales (> 80 chars), capado a 1200 chars.
                 if memoria is not None and memoria.activa:
-                    texto_memoria = respuesta.texto.strip()[:1500]
-                    if len(texto_memoria) > 80:
+                    texto_resp = respuesta.texto.strip()[:1200]
+                    if len(texto_resp) > 80:
                         try:
+                            pregunta_corta = pregunta_usuario.strip()[:300]
+                            if pregunta_corta:
+                                contenido_mem = f"P: {pregunta_corta}\nR: {texto_resp}"
+                            else:
+                                contenido_mem = texto_resp
                             memoria.guardar(
-                                contenido=texto_memoria,
+                                contenido=contenido_mem,
                                 tipo="respuesta_agente",
                             )
                         except Exception:
