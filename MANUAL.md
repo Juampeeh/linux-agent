@@ -1,6 +1,6 @@
 # 📖 Manual de Usuario — Linux Local AI Agent
 
-> **Versión:** 1.2.0 | **Plataforma:** Ubuntu Linux (VM/físico) + Windows (desarrollo)
+> **Versión:** 2.0.0 | **Plataforma:** Ubuntu Linux (VM/físico) + Windows (desarrollo)
 > **Repositorio:** https://github.com/Juampeeh/linux-agent
 
 ---
@@ -26,6 +26,12 @@
 10. [Referencia de archivos](#10-referencia-de-archivos)
 11. [Memoria Semántica](#11-memoria-semántica)
 12. [Solución de problemas](#12-solución-de-problemas)
+13. [Búsqueda Web (v2.0)](#13-búsqueda-web-v20)
+14. [Herramientas de Archivos y SSH (v2.0)](#14-herramientas-de-archivos-y-ssh-v20)
+15. [Modo Tarea Autónoma — /task (v2.0)](#15-modo-tarea-autónoma--task-v20)
+16. [Centinela de Fondo (v2.0)](#16-centinela-de-fondo-v20)
+17. [Telegram — Alertas y Control Remoto (v2.0)](#17-telegram--alertas-y-control-remoto-v20)
+18. [Heimdall — Monitoreo Remoto (Fase 2)](#18-heimdall--monitoreo-remoto-fase-2)
 
 ---
 
@@ -936,4 +942,218 @@ python3 main.py          # si instalaste deps en sistema
 
 ---
 
-*Manual Linux Local AI Agent v1.1.0 — https://github.com/Juampeeh/linux-agent*
+## 13. Búsqueda Web (v2.0)
+
+El agente puede buscar en internet usando **DuckDuckGo** — sin API key, sin costo, 100% privado.
+
+### Cómo el LLM lo usa automáticamente
+
+Cuando el LLM detecta que necesita información que no tiene (documentación, versiones, soluciones a errores), invoca la herramienta `web_search` internamente. No ves ningún comando especial, se integra natüralmente.
+
+Ejemplos de triggers:
+- "Cómo instalo nginx en Ubuntu 24.04?"
+- "Qué hace el error `E: Package not found`?"
+- "Cuál es la última versión de Docker?"
+
+### Búsqueda manual con /web
+
+```
+/web linux systemd timer service example
+```
+
+Muestra los resultados directamente sin invocar al LLM.
+
+### Configuración
+
+```env
+WEB_SEARCH_ENABLED=True      # Habilitar/deshabilitar búsqueda
+WEB_SEARCH_MAX_RESULTS=5     # Número de resultados por búsqueda
+```
+
+> **Nota:** Si `WEB_SEARCH_ENABLED=False`, el agente puede igualmente pedirte que busques y te diga qué buscar, pero no ejecutará la búsqueda solo.
+
+---
+
+## 14. Herramientas de Archivos y SSH (v2.0)
+
+### Leer y escribir archivos
+
+El agente puede leer y escribir archivos del sistema directamente (más eficiente y seguro que usar `cat` / redirect via bash):
+
+- **`read_file(path)`** — lee el contenido con syntax highlight en terminal
+- **`write_file(path, content, modo)`** — escribe con preview + confirmación en modo seguro
+
+Ejemplos de pedidos al agente:
+- "Leé el archivo /etc/nginx/nginx.conf"
+- "Creá un script en /home/test/backup.sh con este contenido: ..."
+
+### Ejecutar comandos en hosts remotos (SSH)
+
+```
+[Usuario] Reiniá el servicio nginx en el servidor 192.168.0.100 (user: admin)
+[Agenté] Voy a ejecutar 'systemctl restart nginx' en admin@192.168.0.100...
+```
+
+El agente usa `execute_ssh` internamente. En modo seguro pide confirmación. Usa `~/.ssh/id_rsa` por defecto o podés pasar la ruta en el pedido.
+
+### Wake-on-LAN
+
+Enciende equipos remotos con:
+- "Encendé la PC con MAC AA:BB:CC:DD:EE:FF"
+
+Requiere que el equipo tenga Wake-on-LAN activo en la BIOS.
+
+Configuración:
+```env
+WOL_BROADCAST=192.168.0.255
+SSH_DEFAULT_TIMEOUT=30
+```
+
+---
+
+## 15. Modo Tarea Autónoma — /task (v2.0)
+
+El modo `/task` activa el **Agentic Loop**: el agente trabaja de forma autónoma con reintentos inteligentes.
+
+### Uso
+
+```
+/task Instalá y configurá un servidor NGINX con SSL autofirmado y aseguráte de que quede activo
+```
+
+### Cómo funciona
+
+1. El agente descompone la tarea en pasos
+2. Ejecuta cada paso con las herramientas disponibles
+3. Si un paso **falla**: busca en memoria local → busca en web → reintenta
+4. Si supera `AGENTIC_MAX_RETRIES` errores consecutivos, se detiene y te explica qué pasó
+5. Al terminar, el LLM **consolida el episodio** en un insight de memoria (últil para próximas tareas similares)
+
+### Configuración
+
+```env
+AGENTIC_MAX_RETRIES=5        # Fallos consecutivos máximos antes de abandoar
+AGENTIC_USE_WEB_ON_FAIL=True # Buscar en web cuando un paso bash falla
+AGENTIC_MAX_ITERATIONS=20    # Máx de iteraciones del LLM por tarea
+MEMORY_CONSOLIDATE_ON_TASK=True # Consolida el episodio al terminar /task
+```
+
+> **Modo seguro en /task:** Si `REQUIRE_CONFIRMATION=True`, el agente sigue pidiendo confirmación para cada comando peligroso. Usa `/auto` para desactivarla si querés que corra sin parar.
+
+---
+
+## 16. Centinela de Fondo (v2.0)
+
+El **Centinela** es un proceso daemon que analiza el sistema periódicamente en background y te alerta si detecta anomalías.
+
+### Activar en .env (inicio automático)
+
+```env
+SENTINEL_ENABLED=True
+SENTINEL_INTERVAL_SECONDS=300   # Cada 5 minutos
+SENTINEL_LOG_TAIL_LINES=100     # Cuántas líneas de log analizar
+```
+
+### Activar/desactivar en caliente
+
+```
+/sentinel start    # Inicia el centinela en background
+/sentinel stop     # Detiene el centinela
+/sentinel status   # Ver estado actual y última alerta
+```
+
+### Qué monitorea
+
+- **CPU** load average (`/proc/loadavg`)
+- **Memoria** `free -h`
+- **Disco** `df -h`
+- **Errores del sistema** `journalctl -p err`
+- **Logs de autenticación** `/var/log/auth.log`
+- **Syslog** `/var/log/syslog`
+
+En cada ciclo envía el estado al LLM local (LM Studio o Ollama) para análisis. Si detecta anomalías:
+1. Aparece un panel de alerta en la terminal
+2. Se envía una alerta por Telegram (si está configurado)
+
+### Logs del centinela
+
+```bash
+tail -f /home/test/linux_agent/sentinel.log
+```
+
+---
+
+## 17. Telegram — Alertas y Control Remoto (v2.0)
+
+El bot de Telegram permite recibir alertas del centinela y enviarle pedidos al agente desde el teléfono.
+
+### Configuración inicial (10 minutos)
+
+**Paso 1: Crear el bot**
+1. Abrí Telegram y buscá `@BotFather`
+2. Enviá `/newbot` y seguí las instrucciones
+3. Copiá el token que te da (formato: `1234567890:ABCdefGHI...`)
+
+**Paso 2: Configurar en .env**
+```env
+TELEGRAM_ENABLED=True
+TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHI...
+TELEGRAM_ALLOWED_IDS=      # Dejar vació por ahora
+```
+
+**Paso 3: Registrar tu chat_id**
+1. Iniciá el agente: `python main.py`
+2. El agente dirá que el bot está esperando registro
+3. Abrí Telegram, buscá tu bot y enviá cualquier mensaje
+4. El bot te responde: "Tu chat ID es: `123456789`"
+5. Agregá ese ID al .env:
+
+```env
+TELEGRAM_ALLOWED_IDS=123456789
+```
+
+**Paso 4:** Reiniciá el agente. Listo.
+
+### Funcionalidades
+
+| Acción | Cómo |
+|--------|-------|
+| Alertas del centinela | Automáticas cuando se detecta anomalía |
+| Enviar pedido al agente | Escribí cualquier texto en el chat |
+| Ver estado | `/status` |
+| Aprobación de comandos (modo seguro) | Bot envía botones Sí/No en el teléfono |
+| Ver estado del centinela | `/sentinel` |
+
+> **Seguridad:** Solo los chat IDs en `TELEGRAM_ALLOWED_IDS` pueden interactuar con el bot. Si está vacío, el primer usuario que escriba queda registrado (solo útil durante setup).
+
+---
+
+## 18. Heimdall — Monitoreo Remoto (Fase 2)
+
+> ⚠️ **Está deshabilitado por defecto.** Activarlo solo cuando el servidor Heimdall esté configurado con SSH sin contraseña.
+
+El centinela puede conectarse por SSH a tu PC Heimdall (servidor con Pi-hole, Nginx, Suricata, CrowdSec, etc.) y analizar sus logs junto con los del servidor principal.
+
+### Configuración
+
+**Paso 1: Configurar SSH sin contraseña desde la VM**
+```bash
+# En la VM:
+ssh-keygen -t rsa -b 4096   # Si no tenés clave
+ssh-copy-id usuario@ip-heimdall
+```
+
+**Paso 2: Configurar en .env**
+```env
+HEIMDALL_ENABLED=True
+HEIMDALL_HOST=192.168.0.X      # IP de tu PC Heimdall
+HEIMDALL_USER=tu-usuario
+HEIMDALL_SSH_KEY=~/.ssh/id_rsa  # Clave SSH (generalmente es la default)
+HEIMDALL_LOG_PATHS=/var/log/nginx/access.log,/var/log/suricata/eve.json,/var/log/pihole/pihole.log
+```
+
+**Paso 3:** Reiniciá el agente o el centinela. Ahora en cada ciclo del centinela, Heimdall también será analizado.
+
+---
+
+*Manual Linux Local AI Agent v2.0.0 — https://github.com/Juampeeh/linux-agent*
