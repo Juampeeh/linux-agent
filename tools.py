@@ -1,12 +1,16 @@
 # =============================================================================
-# tools.py — Herramienta execute_local_bash del Linux Local AI Agent
+# tools.py — Herramienta execute_local_bash (con streaming)
+# Linux Local AI Agent v2.0
 # =============================================================================
 
 from __future__ import annotations
+import re as _re
+import select
 import subprocess
-import shlex
+import time
 import config as cfg
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 from rich.prompt import Confirm
@@ -15,6 +19,9 @@ console = Console()
 
 # Máximo de caracteres a retornar al LLM (evita sobrecargar el contexto)
 _MAX_OUTPUT = cfg.MAX_OUTPUT_CHARS
+
+# Máximo de líneas mostradas en el terminal durante el streaming
+_MAX_DISPLAY_LINES = 60
 
 # Patrones de comandos que pueden bloquearse esperando input interactivo
 _PATRONES_INTERACTIVOS = [
@@ -35,8 +42,6 @@ _PATRONES_INTERACTIVOS = [
     r"^\s*ls -R ~/",            # ls recursivo en home
 ]
 
-import re as _re
-
 
 def _es_comando_riesgoso(comando: str) -> str | None:
     """Retorna una advertencia si el comando puede bloquearse, o None si es seguro."""
@@ -54,7 +59,7 @@ def ejecutar_bash(
     require_confirmation: bool | None = None,
 ) -> str:
     """
-    Ejecuta un comando bash localmente usando subprocess.
+    Ejecuta un comando bash localmente usando subprocess con streaming en tiempo real.
 
     Parámetros
     ----------
@@ -79,7 +84,6 @@ def ejecutar_bash(
     cmd_text = Text()
     cmd_text.append("$ ", style="bold green")
     cmd_text.append(comando, style="bold yellow")
-
     console.print(Panel(cmd_text, title="[bold cyan]Comando a ejecutar[/]", border_style="cyan"))
 
     # ── Pedir confirmación si está activo ─────────────────────────────────────
@@ -97,34 +101,124 @@ def ejecutar_bash(
             console.print("  [dim]↩ Comando cancelado por el usuario.[/dim]")
             return "Comando cancelado por el usuario."
 
-    # ── Ejecutar ──────────────────────────────────────────────────────────────
+    # ── Ejecutar con streaming ────────────────────────────────────────────────
     try:
-        resultado = subprocess.run(
+        proc = subprocess.Popen(
             comando,
             shell=True,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=cfg.COMMAND_TIMEOUT,
+            bufsize=1,
         )
 
-        stdout = resultado.stdout.strip()
-        stderr = resultado.stderr.strip()
-        returncode = resultado.returncode
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        displayed_lines = 0
+        truncated_display = False
+        start_time = time.time()
 
-        # Combinar salidas
+        console.print(f"[dim]──── Output ────[/dim]")
+
+        # Usar select para leer stdout y stderr sin bloquear (funciona en Linux)
+        try:
+            while True:
+                # ── Verificar timeout global ──────────────────────────────────
+                elapsed = time.time() - start_time
+                if elapsed >= cfg.COMMAND_TIMEOUT:
+                    proc.kill()
+                    msg = f"Error: El comando excedió el timeout de {cfg.COMMAND_TIMEOUT} segundos."
+                    console.print(f"[bold red]⏱ Timeout:[/] {msg}")
+                    return msg
+
+                # Verificar si el proceso terminó
+                if proc.poll() is not None:
+                    # Proceso terminó — leer lo que queda
+                    remaining_out = proc.stdout.read()
+                    remaining_err = proc.stderr.read()
+                    if remaining_out:
+                        for line in remaining_out.splitlines():
+                            stdout_lines.append(line)
+                            if displayed_lines < _MAX_DISPLAY_LINES:
+                                console.print(line)
+                                displayed_lines += 1
+                            else:
+                                truncated_display = True
+                    if remaining_err:
+                        for line in remaining_err.splitlines():
+                            stderr_lines.append(line)
+                    break
+
+                reads = [proc.stdout.fileno(), proc.stderr.fileno()]
+                try:
+                    readable, _, _ = select.select(reads, [], [], 1.0)
+                except (ValueError, OSError):
+                    break
+
+                for fd in readable:
+                    if fd == proc.stdout.fileno():
+                        line = proc.stdout.readline()
+                        if line:
+                            stripped = line.rstrip()
+                            stdout_lines.append(stripped)
+                            if displayed_lines < _MAX_DISPLAY_LINES:
+                                console.print(stripped)
+                                displayed_lines += 1
+                            elif not truncated_display:
+                                console.print(
+                                    f"[dim]  ... (output continúa, mostrando hasta "
+                                    f"{_MAX_DISPLAY_LINES} líneas)[/dim]"
+                                )
+                                truncated_display = True
+
+                    elif fd == proc.stderr.fileno():
+                        line = proc.stderr.readline()
+                        if line:
+                            stderr_lines.append(line.rstrip())
+
+        except Exception:
+            # Fallback: esperar a que termine y leer todo
+            try:
+                outs, errs = proc.communicate(timeout=cfg.COMMAND_TIMEOUT)
+                for line in outs.splitlines():
+                    stdout_lines.append(line)
+                    if displayed_lines < _MAX_DISPLAY_LINES:
+                        console.print(line)
+                        displayed_lines += 1
+                for line in errs.splitlines():
+                    stderr_lines.append(line)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                msg = f"Error: El comando excedió el timeout de {cfg.COMMAND_TIMEOUT} segundos."
+                console.print(f"[bold red]⏱ Timeout:[/] {msg}")
+                return msg
+
+        # Esperar fin del proceso con timeout
+        try:
+            proc.wait(timeout=cfg.COMMAND_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            msg = f"Error: El comando excedió el timeout de {cfg.COMMAND_TIMEOUT} segundos."
+            console.print(f"[bold red]⏱ Timeout:[/] {msg}")
+            return msg
+
+        returncode = proc.returncode
+
+        # Construir output combinado para el LLM
+        stdout_str = "\n".join(stdout_lines).strip()
+        stderr_str = "\n".join(stderr_lines).strip()
+
         partes = []
-        if stdout:
-            partes.append(stdout)
-        if stderr:
-            partes.append(f"[STDERR]\n{stderr}")
+        if stdout_str:
+            partes.append(stdout_str)
+        if stderr_str:
+            partes.append(f"[STDERR]\n{stderr_str}")
 
         output = "\n".join(partes) if partes else "(sin salida)"
 
-        # Mostrar en terminal con colores
-        if returncode == 0:
-            _mostrar_output(output, "OK", "green")
-        else:
-            _mostrar_output(output, f"Exit code: {returncode}", "red")
+        # Mostrar status final
+        color = "green" if returncode == 0 else "red"
+        console.print(f"[{color}]  ↳ Exit code: {returncode}[/{color}]")
 
         # Truncar para no sobrecargar el contexto del LLM
         if len(output) > _MAX_OUTPUT:
@@ -132,30 +226,7 @@ def ejecutar_bash(
 
         return f"Exit code: {returncode}\n{output}"
 
-    except subprocess.TimeoutExpired:
-        msg = f"Error: El comando excedió el timeout de {cfg.COMMAND_TIMEOUT} segundos."
-        console.print(f"[bold red]⏱ Timeout:[/] {msg}")
-        return msg
-
     except Exception as e:
         msg = f"Error inesperado al ejecutar el comando: {e}"
         console.print(f"[bold red]✗ Error:[/] {msg}")
         return msg
-
-
-def _mostrar_output(output: str, status: str, color: str) -> None:
-    """Muestra el output del comando en un panel con colores."""
-    # Limitar la visualización en terminal (el LLM recibe más si hay)
-    lines = output.splitlines()
-    if len(lines) > 50:
-        display = "\n".join(lines[:50]) + f"\n[dim]... ({len(lines) - 50} líneas más)[/dim]"
-    else:
-        display = output
-
-    console.print(
-        Panel(
-            display or "[dim](sin salida)[/dim]",
-            title=f"[bold {color}]Output [{status}][/]",
-            border_style=color,
-        )
-    )
