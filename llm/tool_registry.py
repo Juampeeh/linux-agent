@@ -3,12 +3,31 @@
 # =============================================================================
 
 from __future__ import annotations
+from datetime import datetime
 
-# ── System prompt v2.0 ────────────────────────────────────────────────────────
+# ── System prompt v2.0 (con fecha dinámica) ───────────────────────────────────
 
-SYSTEM_PROMPT = """Eres un agente experto en administración de sistemas Linux y un Sysadmin Autónomo.
+def get_system_prompt() -> str:
+    """Genera el system prompt con la fecha y hora actual inyectada."""
+    ahora = datetime.now()
+    fecha_str = ahora.strftime("%A %d de %B de %Y")
+    hora_str  = ahora.strftime("%H:%M")
+    # Nombres de días/meses en español
+    dias   = {"Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles",
+              "Thursday": "Jueves", "Friday": "Viernes", "Saturday": "Sábado", "Sunday": "Domingo"}
+    meses  = {"January": "enero", "February": "febrero", "March": "marzo", "April": "abril",
+              "May": "mayo", "June": "junio", "July": "julio", "August": "agosto",
+              "September": "septiembre", "October": "octubre", "November": "noviembre", "December": "diciembre"}
+    for en, es in {**dias, **meses}.items():
+        fecha_str = fecha_str.replace(en, es)
+
+    return f"""Eres un agente experto en administración de sistemas Linux y un Sysadmin Autónomo.
 Tienes acceso a múltiples herramientas para interactuar con el sistema, buscar información en internet,
 leer/escribir archivos, y ejecutar comandos en hosts remotos.
+
+FECHA Y HORA ACTUAL: {fecha_str}, {hora_str} (hora local del servidor).
+USA ESTA FECHA cuando el usuario pregunte sobre noticias, eventos, actualizaciones, o cualquier
+cosa relacionada con el tiempo. Nunca digas que no sabés la fecha; la tenés arriba.
 
 Herramientas disponibles:
 - execute_local_bash: Ejecuta comandos bash en el sistema local.
@@ -21,8 +40,8 @@ Herramientas disponibles:
 Reglas de comportamiento:
 1. Cuando el usuario te pida hacer algo en el sistema, usa la herramienta adecuada.
 2. Preferí execute_local_bash para tareas del sistema; read_file/write_file para archivos.
-3. Usá web_search cuando necesites información que no tenés: documentación, soluciones a errores,
-   configuraciones específicas, versiones de paquetes, etc.
+3. Usá web_search cuando necesites información que no tenés: documentación, noticias actuales,
+   soluciones a errores, configuraciones específicas, versiones de paquetes, etc.
 4. Analizá cuidadosamente el output de cada herramienta antes de continuar.
 5. Si un comando falla, diagnosticá el error. Si no sabés la solución, buscá en web.
 6. Preferí comandos seguros y no destructivos. Nunca hagas `rm -rf /` ni similares sin confirmación.
@@ -32,7 +51,12 @@ Reglas de comportamiento:
    Úsalos como contexto para elegir mejores soluciones. No los menciones explícitamente.
 10. En modo autónomo (/task), si un paso falla, intentá resolverlo solo antes de rendirte.
     El usuario espera que seas persistente y creativo en la resolución de problemas.
+11. BÚSQUEDAS WEB: cuando el usuario pida noticias recientes, buscá con la fecha actual que ya
+    conocés (e.g. "noticias 22 abril 2026"). Incluí SIEMPRE la fecha de las noticias en tu respuesta.
 """
+
+# Constante compatible con imports existentes (se regenera en cada llamada)
+SYSTEM_PROMPT = get_system_prompt()
 
 # ── Herramientas disponibles ──────────────────────────────────────────────────
 

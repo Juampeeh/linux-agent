@@ -39,7 +39,7 @@ from rich import print as rprint
 import config as cfg
 from llm.router import crear_agente, motores_disponibles, intentar_fallback_local
 from llm.history import HistorialCanonico
-from llm.tool_registry import HERRAMIENTAS, SYSTEM_PROMPT
+from llm.tool_registry import HERRAMIENTAS, SYSTEM_PROMPT, get_system_prompt
 from llm.memory import crear_memoria, formatear_contexto_memoria
 from agentic_loop import ejecutar_tool, AgenticTaskRunner
 
@@ -240,20 +240,39 @@ def _sentinel_status(memoria=None) -> None:
     if memoria:
         try:
             msgs = memoria.leer_mensajes_sentinel(source_filter="sentinel", solo_no_leidos=False)
-            # Buscar el último STATUS
+            # Buscar el último STATUS (de ciclo o de arranque)
             for msg in reversed(msgs):
                 if msg["type"] == "STATUS":
                     payload = msg["payload"]
                     ts = datetime.fromtimestamp(msg["created_at"]).strftime("%H:%M:%S")
-                    console.print(Panel(
-                        f"Estado: [bold]{payload.get('estado', 'desconocido')}[/bold]\n"
-                        f"Ciclo: {payload.get('ciclo', '?')} — "
-                        f"Nivel: [bold]{payload.get('nivel', '?')}[/bold]\n"
-                        f"Resumen: {payload.get('resumen', '—')}\n"
-                        f"Última actualización: {ts}",
-                        title="[bold cyan]🔍 Centinela[/]",
-                        border_style="cyan",
-                    ))
+
+                    if "ciclo" in payload:
+                        # STATUS de ciclo analítico
+                        nivel   = payload.get("nivel", "?")
+                        resumen = payload.get("resumen", "—")
+                        ciclo   = payload.get("ciclo", "?")
+                        vivo    = _sentinel_proc and _sentinel_proc.poll() is None
+                        estado_str = "[green]corriendo[/green]" if vivo else "[yellow]detenido[/yellow]"
+                        color_nivel = "red" if nivel == "critical" else ("yellow" if nivel == "warning" else "green")
+                        console.print(Panel(
+                            f"Proceso: {estado_str}\n"
+                            f"Ciclo: {ciclo} — Nivel: [{color_nivel}]{nivel.upper()}[/{color_nivel}]\n"
+                            f"Resumen: {resumen}\n"
+                            f"Última actualización: {ts}",
+                            title="[bold cyan]🔍 Centinela[/]",
+                            border_style="cyan",
+                        ))
+                    else:
+                        # STATUS de arranque / parada
+                        estado_raw = payload.get("estado", "desconocido")
+                        pid = payload.get("pid", "")
+                        pid_str = f" (PID {pid})" if pid else ""
+                        console.print(Panel(
+                            f"Estado: [bold]{estado_raw}[/bold]{pid_str}\n"
+                            f"Última actualización: {ts}",
+                            title="[bold cyan]🔍 Centinela[/]",
+                            border_style="cyan",
+                        ))
                     return
         except Exception:
             pass
@@ -261,7 +280,8 @@ def _sentinel_status(memoria=None) -> None:
     vivo = _sentinel_proc and _sentinel_proc.poll() is None
     estado = f"[green]Corriendo (PID {_sentinel_pid})[/green]" if vivo else "[yellow]Detenido[/yellow]"
     console.print(Panel(
-        f"Estado del proceso: {estado}",
+        f"Estado del proceso: {estado}\n"
+        "[dim]Sin datos de ciclo en el bus todavía.[/dim]",
         title="[bold cyan]🔍 Centinela[/]",
         border_style="cyan",
     ))
@@ -485,7 +505,8 @@ def bucle_agente(motor_inicial: str, model_id_inicial: str | None) -> None:
 
     require_confirmation: bool = cfg.REQUIRE_CONFIRMATION
     motor_actual: str = motor_inicial
-    historial = HistorialCanonico(system_prompt=SYSTEM_PROMPT)
+    # Generar system prompt con fecha actual al arrancar la sesión
+    historial = HistorialCanonico(system_prompt=get_system_prompt())
 
     # ── Memoria semántica ─────────────────────────────────────────────────────
     console.print("  ⚙ Iniciando memoria semántica...", end=" ")
@@ -691,7 +712,7 @@ def bucle_agente(motor_inicial: str, model_id_inicial: str | None) -> None:
             ))
 
             # Crear historial nuevo para la tarea con el contexto de la tarea
-            historial_tarea = HistorialCanonico(system_prompt=SYSTEM_PROMPT)
+            historial_tarea = HistorialCanonico(system_prompt=get_system_prompt())
 
             # Inyectar memoria relevante
             if memoria.activa:
@@ -753,17 +774,34 @@ def bucle_agente(motor_inicial: str, model_id_inicial: str | None) -> None:
                 telegram_chat_id=telegram_chat_id,
             )
         except Exception as e:
-            console.print(f"[bold red]  ✗ Error del agente:[/] {e}")
-            console.print("  [yellow]Intentando fallback a LM Studio...[/]")
-            fallback = intentar_fallback_local()
-            if fallback:
-                agente = fallback
-                motor_actual = "local"
-                memoria.cerrar()
-                memoria = crear_memoria(motor_actual)
-                console.print("[green]  ✓ Cambiado a LM Studio.[/]")
+            err_str = str(e).lower()
+            # ── Error 400: contexto demasiado largo ───────────────────────────
+            if "400" in str(e) and ("context" in err_str or "exceeded" in err_str or "length" in err_str):
+                console.print(
+                    "[yellow]  ⚠ Contexto demasiado largo. Reduciendo historial y reintentando...[/yellow]"
+                )
+                # Conservar system prompt + últimos 6 mensajes (3 turnos)
+                historial.reducir(mantener_ultimos=6)
+                try:
+                    _procesar_turno(
+                        agente, historial, require_confirmation, memoria,
+                        pregunta_usuario=user_input,
+                        telegram_chat_id=telegram_chat_id,
+                    )
+                except Exception as e2:
+                    console.print(f"[bold red]  ✗ Error tras reducir contexto:[/] {e2}")
             else:
-                console.print("[red]  ✗ Fallback fallido.[/]")
+                console.print(f"[bold red]  ✗ Error del agente:[/] {e}")
+                console.print("  [yellow]Intentando fallback a LM Studio...[/]")
+                fallback = intentar_fallback_local()
+                if fallback:
+                    agente = fallback
+                    motor_actual = "local"
+                    memoria.cerrar()
+                    memoria = crear_memoria(motor_actual)
+                    console.print("[green]  ✓ Cambiado a LM Studio.[/]")
+                else:
+                    console.print("[red]  ✗ Fallback fallido.[/]")
 
         console.print()
 

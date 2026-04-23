@@ -66,6 +66,25 @@ class HistorialCanonico:
         else:
             self._mensajes = []
 
+    def reducir(self, mantener_ultimos: int = 6) -> None:
+        """
+        Recorta el historial para reducir el contexto ante un error 400.
+        Preserva el system prompt y los últimos N mensajes.
+        Nunca deja un mensaje 'tool' sin su 'assistant' correspondiente.
+        """
+        tiene_system = self._mensajes and self._mensajes[0].rol == "system"
+        base = [self._mensajes[0]] if tiene_system else []
+        resto = self._mensajes[1:] if tiene_system else self._mensajes[:]
+
+        # Recortar a los últimos N mensajes
+        recortados = resto[-mantener_ultimos:]
+
+        # Asegurar que no empiece con un mensaje 'tool' huérfano
+        while recortados and recortados[0].rol == "tool":
+            recortados = recortados[1:]
+
+        self._mensajes = base + recortados
+
     # ── Serialización OpenAI ──────────────────────────────────────────────────
 
     def to_openai(self) -> list[dict[str, Any]]:
