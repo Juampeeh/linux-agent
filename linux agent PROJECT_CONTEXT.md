@@ -8,11 +8,11 @@
 
 ## ¿Qué es este proyecto?
 
-**Linux Local AI Agent** es un agente de IA interactivo que corre en Ubuntu Linux y puede ejecutar comandos bash directamente en el sistema. Usa un sistema de tool calling (function calling) donde el LLM decide qué comandos ejecutar en respuesta a pedidos en lenguaje natural del usuario.
+**Linux Local AI Agent** es un agente de IA autónomo que corre en Ubuntu Linux y puede ejecutar comandos bash, buscar en internet, leer/escribir archivos, conectarse por SSH a hosts remotos, monitorear el sistema en segundo plano (Centinela) y recibir/enviar mensajes por Telegram. Usa un sistema de *function/tool calling* donde el LLM decide qué herramientas invocar en respuesta a pedidos en lenguaje natural.
 
 **Repo GitHub:** https://github.com/Juampeeh/linux-agent  
 **VM principal:** `ssh test@192.168.0.162` (pw: `12344321`)  
-**LM Studio en LAN:** `http://192.168.0.142:1234/v1`  
+**LM Studio en LAN:** `http://192.168.0.142:1234/v1` (modelo preferido: `google/gemma-4-26b-a4b`)  
 **Ruta en VM:** `/home/test/linux_agent/`  
 **Ruta en Windows:** `d:\VS proyects\Linux Agent\`
 
@@ -26,32 +26,43 @@
 - **google-genai** → cliente oficial para Gemini
 - **anthropic** → cliente oficial para Claude
 - **python-dotenv** → carga de `.env`
-- **httpx** → llamadas HTTP para carga de modelos LM Studio y embeddings Gemini
+- **httpx** → llamadas HTTP para carga de modelos LM Studio y embeddings
 - **numpy** → similitud coseno para la capa de memoria vectorial
 - **sqlite3** → (builtin) almacenamiento de la memoria semántica
-- **subprocess** → ejecución de comandos bash locales
-- **paramiko** → SSH/SFTP para scripts de deploy desde Windows (solo dev)
+- **subprocess** → ejecución de comandos bash locales (streaming + timeout)
+- **paramiko** → SSH/SFTP (deploy desde Windows + herramienta execute_ssh del agente)
+- **ddgs / duckduckgo_search** → búsquedas web sin API key (DuckDuckGo)
+- **python-telegram-bot** → bot Telegram para alertas y control remoto
+- **wakeonlan** → paquetes Wake-on-LAN
 
 ---
 
-## Arquitectura del proyecto
+## Arquitectura del proyecto (v2.1)
 
 ```
 linux_agent/
-├── main.py               ← Entry point. Banner + menú de motor + bucle de chat
-├── config.py             ← Carga .env, expone constantes tipadas
-├── tools.py              ← execute_local_bash(): subprocess + confirmación
+├── main.py               ← Entry point. Banner + menú motor + bucle chat + sentinel control
+├── config.py             ← Carga .env, expone 40+ constantes tipadas
+├── tools.py              ← execute_local_bash(): subprocess + streaming + timeout + confirmación
+├── tools_web.py          ← web_search(): DuckDuckGo via ddgs, sin API key
+├── tools_files.py        ← read_file() + write_file() con preview/confirmación
+├── tools_remote.py       ← execute_ssh() via paramiko, wake_on_lan()
+├── sentinel.py           ← Daemon independiente: analiza sistema + LLM + bus SQLite + JIT fallback
+├── agentic_loop.py       ← AgenticTaskRunner: /task con reintentos + memoria + web
+├── memory_consolidator.py← Consolida episodios en memoria al terminar /task
+├── telegram_bot.py       ← Bot async Telegram: polling + InlineKeyboard + alertas
 ├── setup.py              ← Instalador automático (venv + deps + .env)
-├── test_agent.py         ← Suite de tests (19 tests: imports, bash, E2E LLM, memoria)
+├── install_system.py     ← Instala deps en Python del sistema (sin venv)
+├── test_agent.py         ← Suite de 19 tests: imports, bash, E2E LLM, memoria
 │
 ├── llm/
 │   ├── __init__.py
 │   ├── base.py           ← ABC: AgenteIA, RespuestaAgente, ToolCallCanonico
 │   ├── history.py        ← HistorialCanonico (serializa a OpenAI/Gemini/Anthropic)
-│   ├── memory.py         ← MemoriaSemantica: SQLite + coseno + embeddings via API
+│   ├── memory.py         ← MemoriaSemantica v2.1: SQLite + coseno + embeddings + TTL + Progressive Disclosure
 │   ├── router.py         ← crear_agente(), motores_disponibles(), fallback
-│   ├── tool_registry.py  ← HERRAMIENTAS[], SYSTEM_PROMPT, conversores de formato
-│   ├── lmstudio_agent.py ← Adaptador LM Studio (OpenAI-compatible)
+│   ├── tool_registry.py  ← HERRAMIENTAS[8 tools], SYSTEM_PROMPT dinámico, conversores
+│   ├── lmstudio_agent.py ← Adaptador LM Studio (OpenAI-compatible, JIT retry)
 │   ├── ollama_agent.py   ← Adaptador Ollama (OpenAI-compatible)
 │   ├── gemini_agent.py   ← Adaptador Google Gemini (SDK nativo)
 │   ├── openai_agent.py   ← Adaptador OpenAI ChatGPT (SDK nativo)
@@ -63,19 +74,19 @@ linux_agent/
 ├── run_tests_on_vm.py    ← [Windows] Ejecuta test_agent.py en VM via SSH
 ├── sync.py               ← [Windows] deploy + tests + GitHub en un comando
 │
-├── .env                  ← ⚠ GITIGNORED. Credenciales reales. No commitear.
+├── .env                  ← ⚠ GITIGNORED. Credenciales reales.
 ├── .env.example          ← Plantilla comentada del .env
-├── requirements.txt      ← Deps del agente (openai, rich, numpy, google-genai, etc.)
+├── requirements.txt      ← Deps del agente
 ├── requirements-dev.txt  ← Deps de dev: paramiko (solo Windows)
 ├── lm_models.json        ← Lista persistente de modelos LM Studio del usuario
-├── memory.db             ← ⚠ GITIGNORED. Base de datos SQLite de la memoria semántica
-├── README.md             ← Documentación pública
-└── MANUAL.md             ← Manual de usuario completo
+├── memory.db             ← ⚠ GITIGNORED. SQLite con memoria semántica vectorial
+├── .sentinel.pid         ← ⚠ GITIGNORED. PID del proceso centinela activo
+└── sentinel.log          ← Log del centinela (append-only)
 ```
 
 ---
 
-## Flujo de ejecución
+## Flujo de ejecución (v2.1)
 
 ```
 main.py
@@ -85,22 +96,36 @@ main.py
         └─ crear_agente(motor) → router.py → instancia el adaptador correcto
         └─ agente.inicializar()
         └─ crear_memoria(motor) → llm/memory.py → instancia MemoriaSemantica
+        └─ [si SENTINEL_ENABLED] → _sentinel_start() como daemon PID-tracked
         └─ [bucle while True]
+              └─ _procesar_alertas_sentinel() → verifica bus SQLite (no bloquea)
               └─ Prompt.ask()  → input del usuario
-              └─ /comandos especiales → procesados directo
-              └─ memoria.buscar(user_input) → top_k recuerdos por similitud coseno
-              └─ si hay recuerdos: anteponer bloque [MEMORIA] al mensaje
-              └─ historial.agregar_usuario(texto_enriquecido)
+              └─ /comandos especiales → procesados directo (no van al LLM)
+              └─ historial.agregar_usuario(user_input)   ← sin inyección RAG (v2.1)
               └─ _procesar_turno(agente, historial, require_confirmation, memoria)
                     └─ [loop MAX_ITERACIONES=10]
-                          └─ agente.enviar_turno(historial, HERRAMIENTAS)
+                          └─ agente.enviar_turno(historial, HERRAMIENTAS[8])
                                 └─ RespuestaAgente(texto, tool_calls)
                           └─ if tool_calls:
-                                └─ ejecutar_bash(comando, require_confirmation)
+                                └─ ejecutar_tool(tc.nombre, tc.argumentos, ..., memoria)
+                                      └─ execute_local_bash → tools.py
+                                      └─ web_search       → tools_web.py
+                                      └─ read_file        → tools_files.py
+                                      └─ write_file       → tools_files.py
+                                      └─ execute_ssh      → tools_remote.py
+                                      └─ wake_on_lan      → tools_remote.py
+                                      └─ memory_search    → memoria.buscar()     [v2.1]
+                                      └─ memory_get_details → memoria.obtener_detalle() [v2.1]
                                 └─ historial.agregar_resultado_tool(...)
                                 └─ memoria.guardar_si_exitoso(tool, args, resultado)
                           └─ else: mostrar respuesta final, break
 ```
+
+### Diferencia clave v2.0 → v2.1: Progressive Disclosure de Memoria
+
+En v2.0, antes de enviar cada mensaje al LLM se buscaba en memoria y se inyectaba el texto completo de los recuerdos. Esto causaba Context Overflow (Error 400) con consultas que necesitaban varias búsquedas web.
+
+En v2.1, **no hay inyección automática de RAG**. El agente recibe solo el mensaje del usuario. Cuando necesita contexto de sesiones pasadas, él decide invocar `memory_search` (obtiene resúmenes ligeros) y luego `memory_get_details` solo si necesita el contenido completo.
 
 ---
 
@@ -130,48 +155,28 @@ class RespuestaAgente:
     def tiene_tool_calls(self) -> bool: ...
 ```
 
-### `ToolCallCanonico` (`llm/base.py`)
-```python
-@dataclass
-class ToolCallCanonico:
-    call_id: str
-    nombre: str
-    argumentos: dict[str, Any]
-```
-
 ### `HistorialCanonico` (`llm/history.py`)
 Almacena mensajes en formato interno y los serializa a 3 formatos:
 - `.to_openai()` → `list[dict]` para OpenAI / LM Studio / Grok / Ollama
 - `.to_gemini()` → `(system_instruction, history)` para SDK de Gemini
 - `.to_anthropic()` → `(system_prompt, messages)` para SDK de Anthropic
-
-```python
-historial = HistorialCanonico(system_prompt=SYSTEM_PROMPT)
-historial.agregar_usuario("texto")
-historial.agregar_asistente("texto", tool_calls=[...])
-historial.agregar_resultado_tool(tool_call_id, nombre, resultado)
-historial.limpiar(preservar_system=True)
-historial.exportar_markdown()
-```
+- `.reducir(mantener_ultimos=6)` → trim de historial ante Context Overflow
 
 ---
 
-## Herramientas disponibles para el LLM
-
-Solo hay una herramienta por ahora (`llm/tool_registry.py`):
+## Herramientas disponibles para el LLM (v2.1 — 8 tools)
 
 ```python
-HERRAMIENTAS = [{
-    "nombre": "execute_local_bash",
-    "descripcion": "Ejecuta un comando bash en el sistema Linux local...",
-    "parametros": {
-        "type": "object",
-        "properties": {
-            "comando": {"type": "string", "description": "El comando bash a ejecutar"}
-        },
-        "required": ["comando"]
-    }
-}]
+HERRAMIENTAS = [
+    "execute_local_bash",   # bash en el sistema local (streaming + timeout)
+    "web_search",           # DuckDuckGo sin API key
+    "read_file",            # leer archivo del sistema con syntax highlight
+    "write_file",           # escribir/append archivo (confirmación en modo seguro)
+    "execute_ssh",          # comando bash en host remoto via paramiko
+    "wake_on_lan",          # magic packet para encender equipos remotos
+    "memory_search",        # [v2.1] búsqueda semántica → retorna ID + resumen_corto
+    "memory_get_details",   # [v2.1] carga contenido completo por ID
+]
 ```
 
 La herramienta se convierte al formato de cada API:
@@ -181,78 +186,114 @@ La herramienta se convierte al formato de cada API:
 
 ---
 
-## Memoria Semántica Persistente (`llm/memory.py`)
-
-Capa de memoria vectorial que permite al agente recordar comandos exitosos y
-configuraciones del sistema entre sesiones. Diseñada para hardware limitado:
-**sin modelos en Python, sin contenedores, cero dependencias extra.**
+## Memoria Semántica Persistente — v2.1 (`llm/memory.py`)
 
 ### Tecnología
-- **Almacenamiento:** `sqlite3` builtin (archivo `memory.db`, portable y respaldable).
-- **Embeddings:** consumidos vía API `/v1/embeddings` del motor activo (LM Studio/Ollama/Gemini/OpenAI).
-  El modelo en uso por LM Studio (`text-embedding-nomic-embed-text-v1.5`) genera vectores de **768 dimensiones**.
-- **Similitud:** coseno con `numpy` en memoria. Sub-5ms sobre corpus de hasta 2000 entradas.
+- **Almacenamiento:** `sqlite3` builtin (`memory.db`, portable, gitignored)
+- **Embeddings:** `/v1/embeddings` del motor activo (LM Studio: `nomic-embed-text-v1.5` → 768 dims)
+- **Similitud:** coseno con `numpy`. Sub-5ms sobre corpus de hasta 2000 entradas.
+- **Migración automática:** agrega columnas nuevas sin perder datos existentes
 
-### Namespaces de vectores
-Los vectores de distintos modelos de embeddings **no son comparables** entre sí,
-por eso la DB los separa por `embedding_provider`:
+### Schema de la tabla `memorias`
+```sql
+CREATE TABLE memorias (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contenido TEXT NOT NULL,        -- texto completo del recuerdo
+    resumen_corto TEXT,             -- [v2.1] resumen de 1-2 frases para búsquedas ligeras
+    embedding BLOB NOT NULL,        -- vector float32 serializado
+    tipo TEXT,                      -- ver tabla de tipos abajo
+    metadata TEXT,                  -- JSON adicional
+    embedding_provider TEXT,        -- namespace del vector
+    created_at REAL,                -- Unix timestamp
+    expires_at REAL,                -- NULL = permanente; TTL para logs crudos
+    accesses INTEGER DEFAULT 0      -- contador de accesos
+);
+```
 
-| Motor | Provider | Embeddings |
-|-------|----------|------------|
-| `local` (LM Studio) | `"local"` | `/v1/embeddings` OpenAI-compat |
-| `ollama` | `"local"` | `/v1/embeddings` OpenAI-compat (mismo namespace) |
-| `chatgpt` | `"openai"` | OpenAI `text-embedding-3-small` |
-| `gemini` | `"gemini"` | Gemini `text-embedding-004` |
-| `grok` | `None` | xAI aún sin API de embeddings → memoria desactivada |
-| `claude` | `None` | Anthropic sin API de embeddings → memoria desactivada |
+### Tipos de memoria
+| Tipo | Qué guarda | TTL |
+|------|-----------|-----|
+| `respuesta_agente` | Par Q&A: pregunta + respuesta (>80 chars) | Permanente |
+| `comando_exitoso` | Bash exitoso + primeras líneas del output | Permanente |
+| `web_research` | Hallazgos de búsquedas web útiles | Configurable |
+| `env_map` | Mapa del entorno: IPs, rutas, configs descubiertas | Permanente |
+| `insight` | Episodio consolidado por LLM al terminar /task | Permanente |
+| `log_crudo` | Logs de sistema analizados por el centinela | 24h (auto-purga) |
 
-### Clase `MemoriaSemantica`
+### API de la clase `MemoriaSemantica`
 ```python
 from llm.memory import crear_memoria
 
 memoria = crear_memoria(motor_key="local")  # factory principal
 memoria.activa          # bool — False si el motor no soporta embeddings
 
-emb = memoria.get_embedding("texto")        # list[float] | None
-memoria.guardar(contenido, tipo, metadata)  # persiste en SQLite
-memoria.buscar(query, top_k=3, threshold=0.75)  # list[dict] con similitud
-memoria.guardar_si_exitoso(tool, args, resultado)  # hook post-tool
+# Core
+emb = memoria.get_embedding("texto")                    # list[float] | None
+memoria.guardar(contenido, tipo, metadata, resumen_corto)  # persiste en SQLite
+memoria.buscar(query, top_k=3, threshold=0.75)          # list[dict] con id, similitud, resumen_corto
+memoria.obtener_detalle(id_memoria)                     # str — contenido completo por ID [v2.1]
+memoria.guardar_si_exitoso(tool, args, resultado)        # hook post-tool
+
+# Gestión
 stats = memoria.stats()                     # dict con total, por_tipo, db_size_kb
+memoria.purgar_expirados()                  # borra memorias con expires_at vencido
 memoria.limpiar()                           # borra memorias del provider actual
 memoria.cerrar()                            # cierra conexión SQLite
+
+# Bus centinela
+memoria.enviar_mensaje_sentinel(source, type_, payload)
+memoria.leer_mensajes_sentinel(source_filter, solo_no_leidos)
+memoria.marcar_leidos_sentinel(ids)
 ```
 
-### Tipos de memoria guardados
-- `"comando_exitoso"` — bash que retornó exit_code=0 + output resumido.
-- `"preferencia"` — (extensible) preferencias del usuario detectadas.
-- `"configuracion"` — (extensible) valores de config del sistema observados.
+### Namespaces de vectores
+| Motor | Provider | Embeddings |
+|-------|----------|------------|
+| `local` (LM Studio) | `"local"` | `/v1/embeddings` OpenAI-compat |
+| `ollama` | `"local"` | `/v1/embeddings` OpenAI-compat (mismo namespace) |
+| `chatgpt` | `"openai"` | `text-embedding-3-small` |
+| `gemini` | `"gemini"` | `text-embedding-004` |
+| `grok` | `None` | Sin API de embeddings → memoria desactivada |
+| `claude` | `None` | Sin API de embeddings → memoria desactivada |
 
-### Inyección de contexto (transparente al usuario)
-Antes de enviar cada mensaje al LLM, se buscan recuerdos similares y se
-antepone un bloque `[MEMORIA]` al texto del usuario. El LLM lo usa como
-contexto pero no lo repite en su respuesta (indicado en el `SYSTEM_PROMPT`).
+---
 
-```
-[MEMORIA — contexto de sesiones anteriores]
-• [comando_exitoso | 94% relevante]
-  Comando bash exitoso: `df -h`
-  Output:
-  Filesystem  Size  Used ...
+## Centinela (`sentinel.py`) — v2.1
+
+Proceso daemon independiente con estas características:
+
+- **Comunicación:** bus de mensajes via tabla `sentinel_messages` en `memory.db`
+- **Persistencia:** archivo `.sentinel.pid` para rastreo cross-sesión
+- **Desvinculación:** `DETACHED_PROCESS` (Windows) / `start_new_session=True` (Linux)
+- **JIT Fallback:** si LM Studio tira 400 "No models loaded":
+  1. Lee `lm_models.json` → toma el primer modelo
+  2. Fallback a `SENTINEL_LLM_MODEL` del `.env`
+  3. Fallback a `llama-3.2-3b-instruct` como último recurso
+
+```bash
+# Uso desde CLI:
+/sentinel start   # lanza como daemon
+/sentinel stop    # mata el proceso por PID
+/sentinel status  # lee el último ciclo del bus SQLite
+
+# Uso directo:
+python sentinel.py          # loop continuo (produción)
+python sentinel.py --once   # un solo ciclo (testing)
 ```
 
 ---
 
-## Variables de entorno (`.env`)
+## Variables de entorno (`.env`) — v2.1 completo
 
 | Variable | Default | Descripción |
 |----------|---------|-------------|
 | `LMSTUDIO_BASE_URL` | `http://192.168.0.142:1234/v1` | URL LM Studio |
-| `LMSTUDIO_MODEL` | `""` | Modelo específico (vacío=autodetectar) |
-| `LMSTUDIO_EMBED_MODEL` | `""` | Modelo de embeddings LM Studio (vacío=usa el activo) |
+| `LMSTUDIO_MODEL` | `""` | Modelo chat (vacío=autodetectar) |
+| `LMSTUDIO_EMBED_MODEL` | `""` | Modelo embeddings LM Studio |
 | `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | URL Ollama |
 | `OLLAMA_MODEL` | `llama3` | Modelo Ollama |
-| `OLLAMA_EMBED_MODEL` | `""` | Modelo de embeddings Ollama (vacío=usa OLLAMA_MODEL) |
-| `GEMINI_API_KEY` | `""` | Key Gemini (activa el motor si hay valor) |
+| `OLLAMA_EMBED_MODEL` | `""` | Modelo embeddings Ollama |
+| `GEMINI_API_KEY` | `""` | Key Gemini |
 | `GEMINI_MODEL` | `gemini-2.0-flash` | Modelo Gemini |
 | `OPENAI_API_KEY` | `""` | Key OpenAI |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Modelo OpenAI |
@@ -264,10 +305,28 @@ contexto pero no lo repite en su respuesta (indicado en el `SYSTEM_PROMPT`).
 | `COMMAND_TIMEOUT` | `60` | Timeout bash en segundos |
 | `DEFAULT_ENGINE` | `local` | Motor al arrancar |
 | `MAX_OUTPUT_CHARS` | `4000` | Límite chars output al LLM |
-| `MEMORY_ENABLED` | `True` | Activa/desactiva la memoria semántica |
-| `MEMORY_TOP_K` | `3` | Recuerdos a inyectar por consulta |
-| `MEMORY_THRESHOLD` | `0.75` | Similitud coseno mínima (0.0–1.0) |
-| `MEMORY_MAX_ENTRIES` | `2000` | Límite de entradas en DB (auto-purga las más antiguas) |
+| `MEMORY_ENABLED` | `True` | Activa memoria semántica |
+| `MEMORY_TOP_K` | `3` | Recuerdos a retornar por búsqueda |
+| `MEMORY_THRESHOLD` | `0.75` | Similitud mínima (0.0–1.0) |
+| `MEMORY_MAX_ENTRIES` | `2000` | Límite de entradas (auto-purga) |
+| `MEMORY_SHARED_EMBED` | `False` | Usar LM Studio para embeddings de todos los motores |
+| `MEMORY_CONSOLIDATE_ON_TASK` | `True` | Consolidar episodio al terminar /task |
+| `SENTINEL_ENABLED` | `False` | Iniciar centinela al arrancar |
+| `SENTINEL_INTERVAL_SECONDS` | `300` | Frecuencia del ciclo del centinela |
+| `SENTINEL_LOG_TAIL_LINES` | `100` | Líneas de log a analizar por ciclo |
+| `SENTINEL_LLM_URL` | (usa LMSTUDIO_BASE_URL) | URL del LLM para el centinela |
+| `SENTINEL_LLM_MODEL` | `""` | Modelo fijo para el centinela (vacío=JIT auto) |
+| `SENTINEL_HEIMDALL_ENABLED` | `False` | Monitoreo remoto de Heimdall |
+| `TELEGRAM_ENABLED` | `False` | Activar bot Telegram |
+| `TELEGRAM_BOT_TOKEN` | `""` | Token del BotFather |
+| `TELEGRAM_ALLOWED_IDS` | `""` | Chat IDs permitidos (separados por coma) |
+| `WEB_SEARCH_ENABLED` | `True` | Activar búsqueda web |
+| `WEB_SEARCH_MAX_RESULTS` | `5` | Resultados por búsqueda |
+| `WOL_BROADCAST` | `192.168.0.255` | Broadcast para Wake-on-LAN |
+| `SSH_DEFAULT_TIMEOUT` | `30` | Timeout SSH en segundos |
+| `AGENTIC_MAX_RETRIES` | `5` | Fallos máximos en /task |
+| `AGENTIC_USE_WEB_ON_FAIL` | `True` | Buscar en web si un paso bash falla |
+| `AGENTIC_MAX_ITERATIONS` | `20` | Iteraciones máximas en /task |
 | `VM_HOST` | `192.168.0.162` | IP VM (solo scripts Windows) |
 | `VM_PORT` | `22` | Puerto SSH (solo scripts Windows) |
 | `VM_USER` | `test` | Usuario SSH (solo scripts Windows) |
@@ -279,28 +338,67 @@ contexto pero no lo repite en su respuesta (indicado en el `SYSTEM_PROMPT`).
 
 ---
 
+## Comandos del CLI (completo)
+
+| Comando | Descripción |
+|---------|-------------|
+| `/auto` | Toggle modo autónomo ↔ seguro |
+| `/confirm` | Alias de `/auto` |
+| `/task <descripción>` | Agentic Loop con reintentos inteligentes |
+| `/web <query>` | Búsqueda web manual (DuckDuckGo) |
+| `/switch <motor>` | Cambia motor de IA en caliente |
+| `/engines` | Lista motores disponibles y activo |
+| `/model` | Selecciona modelo LM Studio |
+| `/sentinel start/stop/status` | Control del daemon centinela |
+| `/telegram status` | Estado del bot Telegram |
+| `/export` | Guarda sesión como `.md` |
+| `/clear` | Limpia historial de conversación |
+| `/memory stats` | Estadísticas de la memoria semántica |
+| `/memory purge` | Purga memorias expiradas por TTL |
+| `/memory clear` | Borra memorias del provider actual |
+| `/ayuda` | Tabla de ayuda completa |
+| `Ctrl+C` | Salir (el centinela sigue vivo si está activo) |
+| `↑ / ↓` | Navegar historial de comandos (readline) |
+
+---
+
+## Estado actual (Abril 2026 — v2.1)
+
+- ✅ **19/19 tests** pasando en VM `192.168.0.162`
+- ✅ **LM Studio** conectado en `192.168.0.142:1234` — `google/gemma-4-26b-a4b` como modelo principal
+- ✅ **8 herramientas** disponibles para el LLM (bash, web, archivos, SSH, WoL, memoria x2)
+- ✅ **GitHub** publicado: https://github.com/Juampeeh/linux-agent (commit `6ff4742`)
+- ✅ **Progressive Disclosure** — memoria bajo demanda sin Context Overflow
+- ✅ **Sentinel daemon persistente** — sobrevive al cierre del chat (PID file)
+- ✅ **JIT Fallback de modelos** — el centinela auto-carga modelos si LM Studio está dormido
+- ✅ **Telegram bot** `@aldkcifnbot` — alertas automáticas, chat_id `458419035`
+- ✅ **Agentic Loop** `/task` con reintentos: memoria → web → reintento
+- ✅ **Streaming bash** con `select` + timeout global
+- ✅ **System prompt dinámico** con fecha/hora del sistema inyectada
+- ✅ **Historial de comandos ↑↓** con readline persistente
+- ✅ **Fallback dinámico LM Studio** — si el modelo pedido no carga, usa el activo
+- ⬜ Heimdall (Fase 2) — preparado en código pero desactivado (HEIMDALL_ENABLED=False)
+- ⬜ Ollama en VM no probado (no instalado en la VM de prueba)
+
+---
+
+## Comportamiento LM Studio — carga de modelos
+
+`/api/v0/models/load` **no funciona** en la versión actual de LM Studio.
+`inicializar()` ya **no** dispara esta llamada. Flujo real:
+
+1. `enviar_turno()` envía el request con el `model_id` seleccionado
+2. Si LM Studio responde OK → retorna la respuesta
+3. Si LM Studio retorna `BadRequestError: "No models loaded"`:
+   - **Intento 0**: espera 15s, muestra mensaje `⏳`
+   - **Intento ≥1**: también prueba con `model="local-model"` (cualquier modelo activo)
+4. Tras `_REINTENTOS_CARGA=4` intentos (~60s): `RuntimeError` claro al usuario.
+
+---
+
 ## Cómo agregar un nuevo motor LLM
 
-1. Crear `llm/nuevo_agent.py` extendiendo `AgenteIA`:
-```python
-from .base import AgenteIA, RespuestaAgente, ToolCallCanonico
-from .history import HistorialCanonico
-
-class NuevoAgente(AgenteIA):
-    @property
-    def nombre_motor(self) -> str:
-        return "Nombre del motor"
-
-    def inicializar(self) -> None:
-        # verificar conexión / key
-        pass
-
-    def enviar_turno(self, historial, herramientas) -> RespuestaAgente:
-        # llamar a la API
-        # retornar RespuestaAgente(texto=..., tool_calls=[...])
-        pass
-```
-
+1. Crear `llm/nuevo_agent.py` extendiendo `AgenteIA`
 2. Registrar en `config.py` → `MOTORES_DISPONIBLES`
 3. Agregar en `llm/router.py` → `crear_agente()` y `motores_disponibles()`
 4. Agregar variables en `.env.example`
@@ -308,60 +406,9 @@ class NuevoAgente(AgenteIA):
 
 ---
 
----
+## Cómo agregar una nueva herramienta
 
-## Comandos del CLI
-
-| Comando | Descripción |
-|---------|-------------|
-| `/auto` | Toggle modo autónomo (sin confirmación de comandos) |
-| `/confirm` | Alias de `/auto` |
-| `/switch <motor>` | Cambia motor en caliente (ej: `/switch gemini`) |
-| `/engines` | Lista motores disponibles y cuál está activo |
-| `/model` | Selecciona modelo LM Studio (solo motor `local`) |
-| `/export` | Exporta la sesión actual como `.md` |
-| `/clear` | Limpia el historial de conversación |
-| `/memory stats` | Muestra estadísticas de la memoria semántica (total, por tipo, tamaño DB) |
-| `/memory clear` | Borra todas las memorias del provider actual (con confirmación) |
-| `/ayuda` | Muestra la pantalla de ayuda |
-| `Ctrl+C` | Sale del agente |
-
----
-
-## Estado actual (Abril 2026 — v1.2)
-
-- ✅ **19/19 tests** pasando en VM `192.168.0.162`
-- ✅ **LM Studio** conectado en `192.168.0.142:1234` con 14+ modelos disponibles
-- ✅ **GitHub** publicado: https://github.com/Juampeeh/linux-agent
-- ✅ **Cambio de motor en caliente**: `/switch <motor>` y `/model` funcionan mid-session
-- ✅ **Historial de comandos ↑↓**: `readline` + `~/.linux_agent_history` persistente entre sesiones
-- ✅ **Memoria Semántica v1.2**: guarda pares Q&A (`tipo="respuesta_agente"`) para recall
-  semántico entre sesiones, no solo comandos bash exitosos
-- ✅ **`MEMORY_SHARED_EMBED`**: opción para que todos los motores usen LM Studio para embeddings
-  y compartan el mismo namespace vectorial "local"
-- ✅ **Fallback dinámico LM Studio**: si el modelo pedido no carga, usa el que esté activo
-- ✅ **`reasoning_content` fallback**: modelos "thinking" (Gemma, Nemotron, DeepSeek-R1)
-  que retornan `content=''` ahora muestran su respuesta desde `reasoning_content`
-- ✅ **Autodetect embedding filter**: `_autodetectar_modelo()` nunca selecciona modelos
-  de embeddings como motor de chat
-- ✅ **`COMMAND_TIMEOUT` = 60s** y **`_TIMEOUT_INFER_S` = 120s** para modelos grandes
-- ✅ **Detección de comandos interactivos** en `tools.py`
-- ⬜ Ollama en VM no instalado (no probado aún)
-- ⬜ APIs cloud (Gemini/Grok/OpenAI/Claude) configurables pero no testeadas en esta VM
-
----
-
-## Comportamiento LM Studio — carga de modelos (v1.2)
-
-`/api/v0/models/load` **no funciona** en la versión actual de LM Studio (retorna 200 sin efecto).
-`inicializar()` ya **no** dispara esta llamada. Flujo real cuando el usuario envía un mensaje:
-
-1. `enviar_turno()` envía el request con el `model_id` seleccionado
-2. Si LM Studio responde OK → retorna la respuesta. Sincroniza `self._model_id` si el modelo real difiere.
-3. Si LM Studio retorna `BadRequestError: "No models loaded"`:
-   - **Intento 0**: muestra `⏳ LM Studio no tiene 'X' cargado — esperando 15s...` y espera
-   - **Intento ≥1**: además prueba con `model="local-model"` (cualquier modelo activo en LM Studio).
-     Si responde con otro modelo: muestra `ℹ Modelo activo en LM Studio: qwen/...` y usa ese.
-4. Tras `_REINTENTOS_CARGA=4` intentos (~60s): `RuntimeError` con mensaje claro al usuario.
-
-> **Nota:** El import `time` sigue presente en `lmstudio_agent.py` para los sleeps de reintento.
+1. Implementar la función en `tools*.py`
+2. Agregar definición en `llm/tool_registry.py` → `HERRAMIENTAS[]`
+3. Agregar el dispatch en `agentic_loop.py` → `ejecutar_tool()`
+4. Actualizar `SYSTEM_PROMPT` en `tool_registry.py` para que el agente sepa que existe

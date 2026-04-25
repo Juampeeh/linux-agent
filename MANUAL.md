@@ -1,6 +1,6 @@
 # 📖 Manual de Usuario — Linux Local AI Agent
 
-> **Versión:** 2.0.0 | **Plataforma:** Ubuntu Linux (VM/físico) + Windows (desarrollo)
+> **Versión:** 2.1.0 | **Plataforma:** Ubuntu Linux (VM/físico) + Windows (desarrollo)
 > **Repositorio:** https://github.com/Juampeeh/linux-agent
 
 ---
@@ -250,12 +250,19 @@ REQUIRE_CONFIRMATION=False   # Arranca en modo autónomo
 |---------|-------------|
 | `/auto` | Toggle modo autónomo ↔ seguro |
 | `/confirm` | Alias de `/auto` |
+| `/task <descripción>` | Ejecuta una tarea compleja en modo autónomo (Agentic Loop) |
+| `/web <query>` | Búsqueda web manual (DuckDuckGo) |
 | `/switch <motor>` | Cambia el motor de IA en caliente (sin reiniciar) |
 | `/engines` | Lista motores disponibles y activo |
 | `/model` | Selecciona modelo específico de LM Studio |
+| `/sentinel start` | Inicia el centinela en background (persistente) |
+| `/sentinel stop` | Envía señal de stop al centinela |
+| `/sentinel status` | Ver estado actual, último ciclo y alertas |
+| `/telegram status` | Ver estado del bot de Telegram |
 | `/export` | Guarda la sesión como archivo `.md` |
 | `/clear` | Limpia el historial de conversación |
 | `/memory stats` | Muestra estadísticas de la memoria semántica |
+| `/memory purge` | Purga memorias expiradas por TTL |
 | `/memory clear` | Borra los recuerdos del motor actual (pide confirmación) |
 | `/ayuda` o `/help` | Tabla de ayuda |
 | `Ctrl+C` | Salir |
@@ -1154,6 +1161,108 @@ HEIMDALL_LOG_PATHS=/var/log/nginx/access.log,/var/log/suricata/eve.json,/var/log
 
 **Paso 3:** Reiniciá el agente o el centinela. Ahora en cada ciclo del centinela, Heimdall también será analizado.
 
+## 19. Memoria Progresiva / Progressive Disclosure (v2.1)
+
+En v2.1 la arquitectura de memoria cambio de un sistema **RAG automático** (que inyectaba textos al contexto y los saturaba) a un sistema de **revelación progresiva** donde el propio agente elige cuándo y qué recordar.
+
+### ¿Qué cambió?
+
+| Aspecto | v2.0 (antes) | v2.1 (ahora) |
+|---------|-------------|-------------|
+| **Inyección** | Automática: textos completos al contexto | Bajo demanda: solo cuando el agente usa tools |
+| **Tamaño** | Bloques grandes (→ Context Overflow 400) | Resumen corto primero, detalle solo si necesita |
+| **Control** | Del sistema (siempre se inyecta) | Del agente (decide si buscar y qué leer) |
+| **Tokens** | Alto consumo por defecto | Mínimo: solo lo relevante |
+
+### Herramientas de memoria disponibles para el agente
+
+El agente ahora tiene dos herramientas de memoria que puede usar autónomamente:
+
+```
+memory_search  → Busca en la memoria por similitud semántica.
+                  Retorna: ID | Tipo | Similitud | Resumen corto
+                  (gasta pocos tokens — no devuelve el contenido completo)
+
+memory_get_details → Obtiene el contenido COMPLETO de un recuerdo por ID.
+                      Usar solo después de memory_search cuando el resumen
+                      indica que ese recuerdo tiene la info exacta.
+```
+
+### Flujo de uso (automático)
+
+```
+Usuario: "Recordás cómo configuré nginx antes?"
+         ↓
+[Agente decide buscar en memoria]
+         ↓
+memory_search("nginx configuración")
+→ ID:14 | env_map | 0.92 | "nginx config reverse proxy puerto 80"
+         ↓
+[El resumen alcanza? Sí.]
+→ El agente responde directamente.
+
+# O si necesita detalle:
+memory_get_details(14)
+→ Contenido completo del recuerdo
+```
+
+### Configuración
+
+No requiere cambios en `.env`. Funciona automáticamente con la memoria existente.
+
+> **Nota:** Si venías de v2.0, la columna `resumen_corto` se agrega automáticamente
+> a la DB existente sin perder ningún dato al primer arranque (migración no destructiva).
+
 ---
 
-*Manual Linux Local AI Agent v2.0.0 — https://github.com/Juampeeh/linux-agent*
+## 20. Centinela Persistente y Autónomo (v2.1)
+
+En v2.1 el centinela es un **daemon verdaderamente persistente** — sobrevive al cierre del chat y se gestiona con un archivo PID.
+
+### Persistencia real
+
+```bash
+# Iniciarlo (queda vivo aunque cierres la terminal del agente):
+/sentinel start
+# → "Centinela iniciado como daemon (PID: 12345)"
+
+# El archivo /home/test/linux_agent/.sentinel.pid guarda el PID.
+# Si abrís de nuevo el agente, detecta automáticamente que ya está corriendo.
+
+# Para detenerlo explícitamente:
+/sentinel stop
+```
+
+### Inicio automático
+
+```env
+# En .env — para que arranque solo al iniciar el agente:
+SENTINEL_ENABLED=True
+```
+
+### Autonomía de modelo LLM (JIT Fallback)
+
+Si LM Studio no tiene ningún modelo cargado cuando el centinela intenta analizar, **ahora no falla**:
+
+1. Detecta el error 400 (`No models loaded`)
+2. Lee `lm_models.json` para ver qué modelos tenés configurados
+3. Intenta forzar la carga del primero de la lista
+4. Si no hay lista, usa el modelo de `.env` (`SENTINEL_LLM_MODEL`) o un fallback genérico
+
+```env
+# Para fijar el modelo del centinela explícitamente:
+SENTINEL_LLM_MODEL=google/gemma-4-26b-a4b
+
+# URL del LLM para el centinela (por defecto usa LMSTUDIO_BASE_URL):
+SENTINEL_LLM_URL=http://192.168.0.142:1234/v1
+```
+
+### Logs del centinela
+
+```bash
+tail -f /home/test/linux_agent/sentinel.log
+```
+
+---
+
+*Manual Linux Local AI Agent v2.1.0 — https://github.com/Juampeeh/linux-agent*
