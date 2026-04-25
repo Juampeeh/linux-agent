@@ -89,6 +89,13 @@ HEIMDALL_LOG_PATHS: list[str] = [
     ).split(",") if p.strip()
 ]
 
+# ── Web UI (v3.0) ─────────────────────────────────────────────────────────────
+WEB_ENABLED: bool      = os.getenv("WEB_ENABLED", "False").lower() in ("true", "1", "yes")
+WEB_PORT: int          = int(os.getenv("WEB_PORT", "7860"))
+WEB_HOST: str          = os.getenv("WEB_HOST", "0.0.0.0")
+WEB_PASSWORD: str      = os.getenv("WEB_PASSWORD", "")        # vacío = sin autenticación
+WEB_OPEN_BROWSER: bool = os.getenv("WEB_OPEN_BROWSER", "True").lower() in ("true", "1", "yes")
+
 # ── Búsqueda web ──────────────────────────────────────────────────────────────
 WEB_SEARCH_ENABLED: bool    = os.getenv("WEB_SEARCH_ENABLED", "True").lower() in ("true", "1", "yes")
 WEB_SEARCH_MAX_RESULTS: int = int(os.getenv("WEB_SEARCH_MAX_RESULTS", "5"))

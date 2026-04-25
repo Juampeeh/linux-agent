@@ -47,7 +47,7 @@ console = Console()
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 MAX_ITERACIONES = 10   # Máx de tool calls por turno normal (evita loops)
-VERSION         = "2.0.0"
+VERSION         = "3.0.0"
 
 # ── Estado global del centinela ───────────────────────────────────────────────
 _sentinel_proc: subprocess.Popen | None = None
@@ -954,7 +954,64 @@ def _exportar_sesion(historial: HistorialCanonico) -> None:
 # =============================================================================
 
 def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="Linux Local AI Agent v3.0",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Modos de ejecución:\n"
+            "  (sin flags)   CLI interactivo (comportamiento actual)\n"
+            "  --web         Lanza solo la interfaz web (http://localhost:7860)\n"
+            "  --all         Lanza CLI + servidor web en paralelo\n"
+        ),
+    )
+    parser.add_argument("--web",  action="store_true", help="Lanza la Web UI en lugar del CLI")
+    parser.add_argument("--all",  action="store_true", help="Lanza CLI + Web UI en paralelo")
+    parser.add_argument("--port", type=int, default=None, help="Puerto de la Web UI (default: 7860)")
+    parser.add_argument("--no-browser", action="store_true", help="No abrir browser automáticamente")
+    args = parser.parse_args()
+
     mostrar_banner()
+
+    # Modo solo Web
+    if args.web and not args.all:
+        try:
+            from web_server import iniciar_servidor
+            motor, model_id = menu_motor()
+            iniciar_servidor(
+                motor=motor, model_id=model_id,
+                port=args.port, open_browser=not args.no_browser,
+            )
+        except ImportError:
+            console.print("[red]Error: fastapi/uvicorn no están instalados.\n"
+                          "Instalálos con: pip install fastapi 'uvicorn[standard]'[/red]")
+        return
+
+    # Modo CLI + Web
+    if args.all:
+        try:
+            from web_server import iniciar_servidor
+            import threading
+            motor, model_id = menu_motor()
+            web_thread = threading.Thread(
+                target=iniciar_servidor,
+                kwargs=dict(motor=motor, model_id=model_id,
+                            port=args.port, open_browser=not args.no_browser),
+                daemon=True,
+            )
+            web_thread.start()
+            console.print(f"  [green]✓[/] Web UI iniciada en background.")
+            bucle_agente(motor, model_id)
+        except ImportError:
+            console.print("[yellow]⚠ fastapi/uvicorn no disponibles. Iniciando solo CLI.[/yellow]")
+            try:
+                motor, model_id = menu_motor()
+                bucle_agente(motor, model_id)
+            except KeyboardInterrupt:
+                console.print("\n[cyan]  Hasta luego. 👋[/cyan]\n")
+        return
+
+    # Modo CLI puro (default)
     try:
         motor, model_id = menu_motor()
         bucle_agente(motor, model_id)

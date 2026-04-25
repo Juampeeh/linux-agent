@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Sysadmin Agent</title>
+  <meta name="description" content="Linux AI Sysadmin Agent — Interfaz web inteligente para administración de sistemas" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!-- ── Header ─────────────────────────────────────────────────── -->
+  <header id="app-header">
+    <div class="header-brand">
+      <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+      </svg>
+      <span class="brand-name">AI Sysadmin</span>
+      <span class="brand-version" id="app-version">v3.0</span>
+    </div>
+    <div class="header-controls">
+      <div class="motor-selector">
+        <label class="ctrl-label">Motor</label>
+        <select id="motor-select" title="Cambiar motor de IA"></select>
+      </div>
+      <button id="btn-mode" class="mode-btn safe" title="Toggle modo seguro/autónomo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <span id="mode-label">Seguro</span>
+      </button>
+      <div id="connection-dot" class="connection-dot disconnected" title="Estado de conexión"></div>
+    </div>
+  </header>
+
+  <!-- ── Layout principal ──────────────────────────────────────── -->
+  <main id="app-main">
+    <!-- Chat -->
+    <section id="chat-section">
+      <div id="chat-messages" role="log" aria-live="polite" aria-label="Mensajes del chat"></div>
+      <div id="chat-input-area">
+        <div id="input-wrapper">
+          <textarea
+            id="chat-input"
+            placeholder="Escribí tu mensaje o comando (/ayuda, /task, /sentinel...)  [Enter=enviar, Shift+Enter=nueva línea]"
+            rows="1"
+            aria-label="Mensaje"
+            autocomplete="off"
+            spellcheck="false"
+          ></textarea>
+          <div id="input-actions">
+            <button id="btn-task" class="action-btn" title="/task — Tarea autónoma">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+            </button>
+            <button id="btn-send" class="send-btn" title="Enviar (Enter)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+        </div>
+        <div id="quick-cmds">
+          <button class="quick-cmd" data-cmd="/auto">⚡ /auto</button>
+          <button class="quick-cmd" data-cmd="/clear">🗑 /clear</button>
+          <button class="quick-cmd" data-cmd="/memory stats">🧠 memoria</button>
+          <button class="quick-cmd" data-cmd="/sentinel status">🔍 sentinel</button>
+          <button class="quick-cmd" data-cmd="/ayuda">❓ ayuda</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Panel lateral -->
+    <aside id="side-panel">
+      <!-- Sistema -->
+      <div class="panel-card" id="system-card">
+        <div class="card-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+          <h2>Sistema</h2>
+          <button id="btn-refresh-system" class="icon-btn" title="Actualizar métricas">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          </button>
+        </div>
+        <div class="card-body">
+          <div class="metric-row">
+            <span class="metric-label">CPU</span>
+            <div class="metric-bar"><div class="bar-fill cpu-fill" id="cpu-bar"></div></div>
+            <span class="metric-value" id="cpu-value">–</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">RAM</span>
+            <div class="metric-bar"><div class="bar-fill ram-fill" id="ram-bar"></div></div>
+            <span class="metric-value" id="ram-value">–</span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-label">Disco</span>
+            <div class="metric-bar"><div class="bar-fill disk-fill" id="disk-bar"></div></div>
+            <span class="metric-value" id="disk-value">–</span>
+          </div>
+          <div class="metric-extra" id="uptime-load">–</div>
+        </div>
+      </div>
+
+      <!-- Centinela -->
+      <div class="panel-card" id="sentinel-card">
+        <div class="card-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <h2>Centinela</h2>
+          <span id="sentinel-status-badge" class="status-badge stopped">Detenido</span>
+        </div>
+        <div class="card-body">
+          <p id="sentinel-summary" class="sentinel-summary">Sin datos aún.</p>
+          <p id="sentinel-last-update" class="sentinel-meta">–</p>
+          <div class="sentinel-actions">
+            <button id="btn-sentinel-start" class="action-btn-small success">▶ Iniciar</button>
+            <button id="btn-sentinel-stop" class="action-btn-small danger">■ Detener</button>
+            <button id="btn-sentinel-log" class="action-btn-small">📋 Log</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Memoria -->
+      <div class="panel-card" id="memory-card">
+        <div class="card-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          <h2>Memoria</h2>
+          <span id="memory-status-badge" class="status-badge" id="mem-badge">–</span>
+        </div>
+        <div class="card-body">
+          <p id="memory-stats-text" class="memory-stats">–</p>
+          <div class="memory-search-row">
+            <input type="text" id="memory-search-input" placeholder="Buscar en memoria..." aria-label="Buscar en memoria" />
+            <button id="btn-memory-search" class="action-btn-small">🔎</button>
+          </div>
+          <div id="memory-search-results" class="memory-results hidden"></div>
+          <div class="sentinel-actions" style="margin-top:8px">
+            <button id="btn-memory-purge" class="action-btn-small">🗑 Purgar TTL</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- ── Modal de confirmación ─────────────────────────────────── -->
+  <div id="confirm-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box">
+      <h3 id="confirm-title">Confirmar ejecución</h3>
+      <p id="confirm-description" class="confirm-desc">El agente quiere ejecutar el siguiente comando:</p>
+      <pre id="confirm-command" class="confirm-cmd"></pre>
+      <div class="confirm-actions">
+        <button id="btn-confirm-yes" class="confirm-btn yes">✅ Ejecutar</button>
+        <button id="btn-confirm-no"  class="confirm-btn no">❌ Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Modal Log Sentinel ────────────────────────────────────── -->
+  <div id="log-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box modal-box--large">
+      <div class="modal-header">
+        <h3>📋 Log del Centinela</h3>
+        <button id="btn-log-close" class="icon-btn">✕</button>
+      </div>
+      <pre id="log-content" class="log-pre"></pre>
+    </div>
+  </div>
+
+  <!-- ── Toast notificaciones ──────────────────────────────────── -->
+  <div id="toast-container" aria-live="assertive" aria-atomic="true"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
