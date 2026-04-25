@@ -1,6 +1,6 @@
 # 📖 Manual de Usuario — Linux Local AI Agent
 
-> **Versión:** 2.1.0 | **Plataforma:** Ubuntu Linux (VM/físico) + Windows (desarrollo)
+> **Versión:** 3.0.0 | **Plataforma:** Ubuntu Linux (VM/físico) + Windows (desarrollo)
 > **Repositorio:** https://github.com/Juampeeh/linux-agent
 
 ---
@@ -32,6 +32,8 @@
 16. [Centinela de Fondo (v2.0)](#16-centinela-de-fondo-v20)
 17. [Telegram — Alertas y Control Remoto (v2.0)](#17-telegram--alertas-y-control-remoto-v20)
 18. [Heimdall — Monitoreo Remoto (Fase 2)](#18-heimdall--monitoreo-remoto-fase-2)
+19. [Web UI — Interfaz Web (v3.0)](#19-web-ui--interfaz-web-v30)
+20. [Referencia de Variables WEB_*](#20-referencia-de-variables-web)
 
 ---
 
@@ -1265,4 +1267,126 @@ tail -f /home/test/linux_agent/sentinel.log
 
 ---
 
-*Manual Linux Local AI Agent v2.1.0 — https://github.com/Juampeeh/linux-agent*
+## 19. Web UI — Interfaz Web (v3.0)
+
+Desde v3.0, el agente incluye una interfaz web completa que permite interactuar
+desde cualquier browser en la red local (o internet con configuración adicional).
+El CLI existente **no se modifica** — ambas interfaces funcionan en paralelo.
+
+### Iniciar la Web UI
+
+```bash
+# Solo Web UI (el CLI no se inicia)
+python3 main.py --web
+
+# CLI + Web UI en paralelo
+python3 main.py --all
+
+# Con puerto personalizado
+python3 main.py --web --port 8080
+
+# Sin abrir el browser automáticamente
+python3 main.py --web --no-browser
+```
+
+Una vez iniciada, abrir en el browser:
+```
+http://<ip-del-servidor>:7860
+http://192.168.0.162:7860   ← ejemplo con la VM de siempre
+```
+
+### Funcionalidades de la Web UI
+
+| Feature | Descripción |
+|---------|-------------|
+| **Chat en tiempo real** | WebSocket bidireccional, respuestas en streaming |
+| **Tool call cards** | Cada herramienta que usa el agente se muestra como tarjeta colapsable |
+| **Modal de confirmación** | En modo seguro, un popup pide aprobación antes de ejecutar comandos bash |
+| **Panel de sistema** | CPU, RAM, Disco, Uptime, Load average (actualizado cada 15s) |
+| **Panel del centinela** | Estado, último ciclo, botón start/stop, log en modal |
+| **Panel de memoria** | Stats de la DB, búsqueda semántica, purgar TTL |
+| **Selector de motor** | Cambiar motor de IA desde un dropdown sin reiniciar |
+| **Comandos rápidos** | Botones `/auto`, `/clear`, `/memory stats`, `/sentinel status`, `/ayuda` |
+| **Notificaciones push** | Alertas del centinela (anomalías) aparecen como toast automáticamente |
+| **Responsive** | Funciona en celular (el panel lateral se oculta en pantallas pequeñas) |
+
+### Arquitectura de la Web UI
+
+```
+Browser (PC/celular)
+    │
+    │  HTTP / WebSocket (:7860)
+    ▼
+┌──────────────────────────────────────┐
+│  web_server.py  (FastAPI)           │
+│  WS /ws/chat → streaming chat      │
+│  WS /ws/events → alertas push      │
+│  GET /api/status, /api/system       │
+│  POST /api/switch, /api/sentinel    │
+└──────────────────────────────────────┘
+    │ usa
+    ▼
+┌──────────────────────────────────────┐
+│  agent_core.py  (AgentSession)      │
+│  — LLM, historial, memoria, tools  │
+│  — procesar_mensaje() async gen     │
+└──────────────────────────────────────┘
+    │ usa (sin cambios)
+    ▼
+  llm/, tools*.py, sentinel.py,
+  agentic_loop.py, memory.py
+```
+
+### Nuevos archivos (v3.0)
+
+| Archivo | Descripción |
+|---------|-------------|
+| `agent_core.py` | Núcleo del agente desacoplado (AgentSession async) |
+| `web_server.py` | Servidor FastAPI con WebSockets y API REST |
+| `web/index.html` | Estructura HTML de la UI |
+| `web/style.css` | Estilos dark mode premium (Inter + JetBrains Mono) |
+| `web/app.js` | Lógica frontend vanilla JS (WebSocket, modales, métricas) |
+| `web_server_start.py` | Helper para lanzar el servidor (generado en VM) |
+
+### Flujo de confirmación (modo seguro)
+
+Cuando el agente quiere ejecutar `execute_local_bash`, `write_file` o `execute_ssh`
+en modo seguro, el browser muestra un **modal de confirmación**:
+
+```
+┌───────────────────────────────────────┐
+│ Confirmar: execute_local_bash         │
+│ El agente quiere ejecutar:             │
+│ $ hostname                             │
+│                                        │
+│  [✅ Ejecutar]  [❌ Cancelar]           │
+└───────────────────────────────────────┘
+```
+
+Si no respondes en 120 segundos, el comando se cancela automáticamente.
+
+---
+
+## 20. Referencia de Variables WEB_*
+
+Agregar al `.env` para configurar la Web UI:
+
+```env
+# ── Web UI (v3.0) ──────────────────────────────────
+WEB_ENABLED=False       # True para habilitar con la flag --web
+WEB_PORT=7860           # Puerto del servidor
+WEB_HOST=0.0.0.0        # Escucha en toda la red (0.0.0.0) o solo local (127.0.0.1)
+WEB_PASSWORD=           # Vacío = sin auth; algo = requerir esa clave
+WEB_OPEN_BROWSER=True   # Abrir browser automáticamente al iniciar
+```
+
+### Acceso desde internet
+
+Si querés acceder a la UI desde fuera de tu LAN:
+1. Agregar `WEB_PASSWORD=tu_clave_secreta` al `.env`
+2. Abrir el puerto 7860 en el router (NAT/port forwarding)
+3. O usar **Tailscale/WireGuard** (más seguro, sin abrir puertos)
+
+---
+
+*Manual Linux Local AI Agent v3.0.0 — https://github.com/Juampeeh/linux-agent*
