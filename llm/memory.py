@@ -68,6 +68,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS memorias (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     contenido          TEXT    NOT NULL,
+    resumen_corto      TEXT    NOT NULL DEFAULT '',
     embedding          TEXT    NOT NULL,
     tipo               TEXT    NOT NULL,
     embedding_provider TEXT    NOT NULL,
@@ -172,6 +173,10 @@ class MemoriaSemantica:
                 row[1]
                 for row in self._conn.execute("PRAGMA table_info(memorias)")
             }
+            if "resumen_corto" not in cols:
+                self._conn.execute(
+                    "ALTER TABLE memorias ADD COLUMN resumen_corto TEXT NOT NULL DEFAULT ''"
+                )
             if "access_count" not in cols:
                 self._conn.execute(
                     "ALTER TABLE memorias ADD COLUMN access_count INTEGER DEFAULT 1"
@@ -286,7 +291,7 @@ class MemoriaSemantica:
 
         try:
             cursor = self._conn.execute(
-                "SELECT id, contenido, embedding, tipo, metadata "
+                "SELECT id, contenido, resumen_corto, embedding, tipo, metadata "
                 "FROM memorias WHERE embedding_provider = ?",
                 (self._provider,),
             )
@@ -298,15 +303,16 @@ class MemoriaSemantica:
         scored: list[dict[str, Any]] = []
         ids_encontrados: list[int] = []
 
-        for row_id, contenido, emb_json, tipo, meta_json in filas:
+        for row_id, contenido, resumen_corto, emb_json, tipo, meta_json in filas:
             try:
                 emb = json.loads(emb_json)
                 sim = self._coseno(query_vec, emb)
                 if sim >= threshold:
                     scored.append({
-                        "id":        row_id,
-                        "contenido": contenido,
-                        "tipo":      tipo,
+                        "id":            row_id,
+                        "contenido":     contenido,
+                        "resumen_corto": resumen_corto,
+                        "tipo":          tipo,
                         "similitud": round(sim, 3),
                         "metadata":  json.loads(meta_json or "{}"),
                     })
@@ -333,6 +339,23 @@ class MemoriaSemantica:
 
         return resultados
 
+    def obtener_detalle(self, id_memoria: int) -> str | None:
+        """Retorna el contenido completo de una memoria dado su ID."""
+        if not self.activa or not self._conn:
+            return None
+        try:
+            cursor = self._conn.execute(
+                "SELECT contenido FROM memorias WHERE id = ? AND embedding_provider = ?",
+                (id_memoria, self._provider),
+            )
+            fila = cursor.fetchone()
+            if fila:
+                return fila[0]
+            return None
+        except Exception as e:
+            logger.debug(f"[Memoria] Error al obtener detalle (id={id_memoria}): {e}")
+            return None
+
     # ── Guardar con deduplicación ─────────────────────────────────────────────
 
     def guardar(
@@ -340,6 +363,7 @@ class MemoriaSemantica:
         contenido: str,
         tipo:      str,
         metadata:  dict | None = None,
+        resumen_corto: str = "",
     ) -> bool:
         """
         Vectoriza el contenido y lo persiste en SQLite.
@@ -389,11 +413,12 @@ class MemoriaSemantica:
             now = time.time()
             self._conn.execute(
                 """INSERT INTO memorias
-                   (contenido, embedding, tipo, embedding_provider, timestamp, metadata,
+                   (contenido, resumen_corto, embedding, tipo, embedding_provider, timestamp, metadata,
                     access_count, last_seen)
-                   VALUES (?, ?, ?, ?, ?, ?, 1, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)""",
                 (
                     contenido,
+                    resumen_corto,
                     json.dumps(emb),
                     tipo,
                     self._provider,

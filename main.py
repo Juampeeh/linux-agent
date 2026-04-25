@@ -194,20 +194,44 @@ def _sentinel_start(memoria=None) -> bool:
     """Arranca el proceso centinela en background."""
     global _sentinel_proc, _sentinel_pid
 
+    pid_file = Path(__file__).parent / ".sentinel.pid"
+
+    # 1. Chequear si ya está corriendo vía archivo PID
+    if pid_file.exists():
+        try:
+            old_pid = int(pid_file.read_text().strip())
+            # Enviar señal 0 para comprobar si el proceso existe
+            import os
+            os.kill(old_pid, 0)
+            _sentinel_pid = old_pid
+            console.print(f"  [yellow]⚠ El centinela ya está corriendo en background (PID: {old_pid}).[/yellow]")
+            return False
+        except (ValueError, ProcessLookupError, PermissionError):
+            # Proceso no existe o no es nuestro, limpiar archivo
+            pid_file.unlink(missing_ok=True)
+
     if _sentinel_proc and _sentinel_proc.poll() is None:
-        console.print("  [yellow]⚠ El centinela ya está corriendo.[/yellow]")
+        console.print("  [yellow]⚠ El centinela ya está corriendo en esta sesión.[/yellow]")
         return False
 
     try:
+        import os
         script = Path(__file__).parent / "sentinel.py"
-        _sentinel_proc = subprocess.Popen(
-            [sys.executable, str(script)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        
+        kwargs = {
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "start_new_session": True,
+        }
+        # En Windows DETACHED_PROCESS evita que muera al cerrar la terminal
+        if os.name == 'nt':
+            kwargs["creationflags"] = 0x00000008
+
+        _sentinel_proc = subprocess.Popen([sys.executable, str(script)], **kwargs)
         _sentinel_pid = _sentinel_proc.pid
-        console.print(f"  [green]✓ Centinela iniciado (PID: {_sentinel_pid})[/green]")
+        pid_file.write_text(str(_sentinel_pid))
+        
+        console.print(f"  [green]✓ Centinela iniciado como daemon (PID: {_sentinel_pid})[/green]")
         return True
     except Exception as e:
         console.print(f"  [red]✗ Error iniciando centinela: {e}[/red]")
@@ -714,19 +738,8 @@ def bucle_agente(motor_inicial: str, model_id_inicial: str | None) -> None:
             # Crear historial nuevo para la tarea con el contexto de la tarea
             historial_tarea = HistorialCanonico(system_prompt=get_system_prompt())
 
-            # Inyectar memoria relevante
-            if memoria.activa:
-                recuerdos = memoria.buscar(tarea)
-                if recuerdos:
-                    bloque = formatear_contexto_memoria(recuerdos)
-                    tarea_enriquecida = f"{bloque}\n\n{tarea}"
-                    console.print(f"  [dim]🧠 {len(recuerdos)} recuerdo(s) inyectado(s).[/dim]")
-                else:
-                    tarea_enriquecida = tarea
-            else:
-                tarea_enriquecida = tarea
-
-            historial_tarea.agregar_usuario(tarea_enriquecida)
+            # La memoria ahora se consulta bajo demanda via tools, no inyectamos automáticamente
+            historial_tarea.agregar_usuario(tarea)
 
             telegram_send_fn = None
             if telegram_chat_id and _telegram_bot and _telegram_bot.is_running():
@@ -756,15 +769,8 @@ def bucle_agente(motor_inicial: str, model_id_inicial: str | None) -> None:
             continue
 
         # ── Mensaje normal al LLM ──────────────────────────────────────────────
-        texto_para_llm = user_input
-        if memoria.activa:
-            recuerdos = memoria.buscar(user_input)
-            if recuerdos:
-                bloque_memoria = formatear_contexto_memoria(recuerdos)
-                texto_para_llm = f"{bloque_memoria}\n\n{user_input}"
-                console.print(f"  [dim]🧠 {len(recuerdos)} recuerdo(s) relevante(s) inyectado(s).[/dim]")
-
-        historial.agregar_usuario(texto_para_llm)
+        # La memoria ahora se consulta bajo demanda via tools
+        historial.agregar_usuario(user_input)
         console.print()
 
         try:
@@ -821,11 +827,7 @@ def _cleanup(memoria) -> None:
             _telegram_bot.stop()
         except Exception:
             pass
-    if _sentinel_proc and _sentinel_proc.poll() is None:
-        try:
-            _sentinel_stop()
-        except Exception:
-            pass
+    # NOTA: _sentinel_proc NO se detiene aquí para que persista en background
 
 
 def _switch_motor(nuevo_motor: str, agente_actual, motor_actual: str):

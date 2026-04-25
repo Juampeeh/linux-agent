@@ -250,6 +250,35 @@ def _llamar_llm(prompt: str, system: str | None = None) -> str:
                 json=body,
                 headers={"Authorization": "Bearer lm-studio"},
             )
+            # Manejar error 400 (No models loaded) para JIT fallback
+            if resp.status_code == 400 and "no models loaded" in resp.text.lower():
+                logger.info("LM Studio dormido (No models loaded). Intentando carga JIT autónoma...")
+                fallback_model = None
+                try:
+                    # Intentar leer la lista de modelos interactivos
+                    models_path = _BASE_DIR / "llm" / "lm_models.json"
+                    if models_path.exists():
+                        import json as _json
+                        datos_json = _json.loads(models_path.read_text(encoding="utf-8"))
+                        modelos_guardados = datos_json.get("models", []) if isinstance(datos_json, dict) else []
+                        if modelos_guardados:
+                            fallback_model = modelos_guardados[0]
+                except Exception:
+                    pass
+                
+                if not fallback_model:
+                    # Fallback si el archivo no existe o está vacío
+                    fallback_model = os.getenv("SENTINEL_LLM_MODEL") or os.getenv("LMSTUDIO_MODEL") or "llama-3.2-3b-instruct"
+                
+                if fallback_model:
+                    logger.info(f"Forzando carga del modelo: {fallback_model}")
+                    body["model"] = fallback_model
+                    resp = client.post(
+                        f"{_LLM_URL}/chat/completions",
+                        json=body,
+                        headers={"Authorization": "Bearer lm-studio"},
+                    )
+            
             resp.raise_for_status()
             data = resp.json()
             return data["choices"][0]["message"]["content"].strip()
@@ -257,6 +286,7 @@ def _llamar_llm(prompt: str, system: str | None = None) -> str:
     except Exception as e:
         logger.debug(f"Error llamando al LLM: {e}")
         return ""
+
 
 
 _SYSTEM_SENTINEL = """Eres el analizador de sistema de un AI Sysadmin. Se te proporcionan métricas y logs del sistema.

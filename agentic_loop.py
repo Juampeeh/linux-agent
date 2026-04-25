@@ -89,6 +89,29 @@ def ejecutar_tool(
             broadcast=tc_argumentos.get("broadcast"),
         )
 
+    elif tc_nombre == "memory_search":
+        if not memoria:
+            return "Error: La memoria no está habilitada en esta sesión."
+        query = tc_argumentos.get("query", "")
+        resultados = memoria.buscar(query)
+        if not resultados:
+            return "No se encontraron recuerdos relevantes."
+        salida = []
+        for r in resultados:
+            salida.append(f"ID: {r['id']} | Tipo: {r['tipo']} | Similitud: {r['similitud']}\nResumen: {r.get('resumen_corto', '')}")
+        return "\n\n".join(salida)
+
+    elif tc_nombre == "memory_get_details":
+        if not memoria:
+            return "Error: La memoria no está habilitada en esta sesión."
+        id_mem = tc_argumentos.get("id_memoria")
+        if id_mem is None:
+            return "Error: id_memoria no especificado."
+        detalle = memoria.obtener_detalle(id_mem)
+        if not detalle:
+            return f"Error: No se encontró contenido para el ID {id_mem}."
+        return detalle
+
     else:
         return f"Herramienta '{tc_nombre}' no reconocida."
 

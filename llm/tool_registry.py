@@ -36,6 +36,8 @@ Herramientas disponibles:
 - write_file: Escribe contenido en un archivo del sistema.
 - execute_ssh: Ejecuta un comando en un host remoto via SSH.
 - wake_on_lan: Enciende un equipo remoto enviando un magic packet WoL.
+- memory_search: Busca en tu memoria semántica persistente (retorna resúmenes e IDs).
+- memory_get_details: Obtiene el texto completo y detallado de un recuerdo a partir de su ID.
 
 Reglas de comportamiento:
 1. Cuando el usuario te pida hacer algo en el sistema, usa la herramienta adecuada.
@@ -47,8 +49,7 @@ Reglas de comportamiento:
 6. Preferí comandos seguros y no destructivos. Nunca hagas `rm -rf /` ni similares sin confirmación.
 7. Responde siempre en el mismo idioma que el usuario.
 8. Sé conciso y directo. No repitas el output literalmente; interpretá y resumí.
-9. Cuando el mensaje incluya un bloque [MEMORIA], son recuerdos de sesiones anteriores.
-   Úsalos como contexto para elegir mejores soluciones. No los menciones explícitamente.
+9. TIENES MEMORIA PERSISTENTE: No asumas que no sabes de qué trata un proyecto si te preguntan por sesiones pasadas. Si el usuario se refiere a algo del pasado o te falta contexto para continuar, usa la herramienta `memory_search` para obtener resúmenes. Si un resumen te interesa, usa `memory_get_details` para leerlo completo.
 10. En modo autónomo (/task), si un paso falla, intentá resolverlo solo antes de rendirte.
     El usuario espera que seas persistente y creativo en la resolución de problemas.
 11. BÚSQUEDAS WEB: cuando el usuario pida noticias recientes, buscá con la fecha actual que ya
@@ -216,6 +217,43 @@ HERRAMIENTAS: list[dict] = [
                 },
             },
             "required": ["mac_address"],
+        },
+    },
+    {
+        "nombre":      "memory_search",
+        "descripcion": (
+            "Busca en tu memoria semántica persistente utilizando similitud vectorial. "
+            "Usa esta herramienta cuando necesites recordar contexto de sesiones pasadas, "
+            "configuraciones anteriores, o si el usuario hace referencia a algo que no está "
+            "en el historial inmediato. Retorna una lista de IDs y resúmenes cortos."
+        ),
+        "parametros": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type":        "string",
+                    "description": "Texto, pregunta o concepto a buscar en la memoria.",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "nombre":      "memory_get_details",
+        "descripcion": (
+            "Obtiene el contenido completo y detallado de un recuerdo específico "
+            "a partir de su ID. Usa esto solo después de haber usado memory_search "
+            "y haber encontrado un resumen que parece contener la información exacta que necesitas."
+        ),
+        "parametros": {
+            "type": "object",
+            "properties": {
+                "id_memoria": {
+                    "type":        "integer",
+                    "description": "El ID numérico del recuerdo a recuperar.",
+                },
+            },
+            "required": ["id_memoria"],
         },
     },
 ]
