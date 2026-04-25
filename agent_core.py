@@ -232,10 +232,13 @@ class AgentSession:
             yield {"type": "done"}
             return
 
-        # Actualizar system prompt con fecha actual
-        self.historial.mensajes[0]["content"] = get_system_prompt()
+        # Actualizar system prompt con fecha actual — recrear historial preservando mensajes
+        # _mensajes[0] siempre es el system prompt
+        if self.historial._mensajes:
+            self.historial._mensajes[0].contenido = get_system_prompt()
 
         self.historial.agregar_usuario(texto)
+
         respuesta_final = ""
 
         for iteracion in range(MAX_ITERACIONES):
