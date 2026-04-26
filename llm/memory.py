@@ -155,7 +155,12 @@ class MemoriaSemantica:
         """Abre o crea la base de datos SQLite con el esquema v2.0."""
         try:
             Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            self._conn = sqlite3.connect(
+                self._db_path, 
+                check_same_thread=False, 
+                timeout=30.0
+            )
+            self._conn.execute("PRAGMA journal_mode=WAL;")
             self._conn.executescript(_SCHEMA)
             self._conn.commit()
             # Migración: agregar columnas nuevas si la DB es anterior a v2.0
