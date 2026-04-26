@@ -108,7 +108,9 @@ def leer_archivo(
         contenido = (
             contenido[:_MAX_READ_CHARS]
             + f"\n\n[...archivo truncado a {_MAX_READ_CHARS} chars. "
-            f"Total: {len(contenido)} chars]"
+            f"Total: {len(contenido)} chars.]\n"
+            f"⚠ ADVERTENCIA PARA EL LLM: El archivo es inmenso. "
+            f"Usá execute_local_bash con grep o leé por rango de líneas para no saturar tu memoria de contexto."
         )
 
     return f"Contenido de '{path}':\n{contenido}"

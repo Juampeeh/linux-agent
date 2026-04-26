@@ -473,7 +473,10 @@ def _sentinel_start(memoria) -> bool:
                 start_new_session=True,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
-        return proc.pid is not None
+        if proc.pid is not None:
+            (Path(__file__).parent / ".sentinel.pid").write_text(str(proc.pid))
+            return True
+        return False
     except Exception:
         return False
 
@@ -501,6 +504,7 @@ def _sentinel_status_dict(memoria) -> dict:
     resumen = "Sin datos."
     nivel = "desconocido"
     ultima_act = None
+    estado = "stopped"
 
     if memoria and hasattr(memoria, "leer_mensajes_sentinel"):
         try:
@@ -511,13 +515,19 @@ def _sentinel_status_dict(memoria) -> dict:
                 resumen = payload.get("resumen", resumen)
                 nivel = payload.get("nivel", nivel)
                 ultima_act = ultimo.get("created_at")
+                estado = payload.get("estado", estado)
         except Exception:
             pass
+
+    # Si está vivo pero el último mensaje dice que está detenido, es que está arrancando
+    if corriendo and estado == "stopped":
+        estado = "starting..."
 
     return {
         "corriendo": corriendo,
         "pid": pid,
         "nivel": nivel,
+        "estado": estado,
         "resumen": resumen,
         "ultima_actualizacion": ultima_act,
     }

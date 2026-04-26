@@ -841,6 +841,15 @@ rm ~/linux_agent/memory.db
 
 ## 12. Solución de problemas
 
+### ❌ El estado del centinela o los logs muestran un horario diferente (ej: 3 horas adelantado)
+
+Esto sucede porque la máquina virtual (Ubuntu) está configurada en la zona horaria UTC por defecto, mientras que tu ubicación local (ej: Argentina) es UTC-3.
+
+**Solución:** Ejecutá el siguiente comando en la terminal SSH de tu VM para establecer la zona horaria correcta:
+```bash
+sudo timedatectl set-timezone America/Argentina/Buenos_Aires
+```
+
 ### ❌ `python: command not found` al intentar iniciar sin venv
 
 ```bash

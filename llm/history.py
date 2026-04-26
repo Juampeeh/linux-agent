@@ -69,15 +69,27 @@ class HistorialCanonico:
     def reducir(self, mantener_ultimos: int = 6) -> None:
         """
         Recorta el historial para reducir el contexto ante un error 400.
-        Preserva el system prompt y los últimos N mensajes.
+        Preserva el system prompt, el ÚLTIMO mensaje del usuario (para no perder el contexto)
+        y los últimos N mensajes.
         Nunca deja un mensaje 'tool' sin su 'assistant' correspondiente.
         """
         tiene_system = self._mensajes and self._mensajes[0].rol == "system"
         base = [self._mensajes[0]] if tiene_system else []
         resto = self._mensajes[1:] if tiene_system else self._mensajes[:]
 
+        # Buscar el último mensaje de usuario para protegerlo de ser eliminado
+        ultimo_user = None
+        for msg in reversed(resto):
+            if msg.rol == "user":
+                ultimo_user = msg
+                break
+
         # Recortar a los últimos N mensajes
         recortados = resto[-mantener_ultimos:]
+
+        # Asegurar que el último prompt del usuario esté presente al inicio del recorte
+        if ultimo_user and ultimo_user not in recortados:
+            recortados.insert(0, ultimo_user)
 
         # Asegurar que no empiece con un mensaje 'tool' huérfano
         while recortados and recortados[0].rol == "tool":

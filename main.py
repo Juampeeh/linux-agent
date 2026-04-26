@@ -14,19 +14,15 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-# Historial de comandos con flechas ↑↓ (readline, disponible en Linux/Mac)
+# Historial de comandos nativo y wrap avanzado (reemplaza a readline)
 try:
-    import readline as _rl
-    import atexit as _atexit
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.history import FileHistory
+    from prompt_toolkit.formatted_text import HTML
     _HIST_FILE = Path.home() / ".linux_agent_history"
-    try:
-        _rl.read_history_file(str(_HIST_FILE))
-    except FileNotFoundError:
-        pass
-    _rl.set_history_length(500)
-    _atexit.register(_rl.write_history_file, str(_HIST_FILE))
+    _prompt_session = PromptSession(history=FileHistory(str(_HIST_FILE)))
 except ImportError:
-    pass  # Windows sin pyreadline3 — degradación silenciosa
+    _prompt_session = None
 
 from rich.console import Console
 from rich.panel import Panel
@@ -206,7 +202,7 @@ def _sentinel_start(memoria=None) -> bool:
             _sentinel_pid = old_pid
             console.print(f"  [yellow]⚠ El centinela ya está corriendo en background (PID: {old_pid}).[/yellow]")
             return False
-        except (ValueError, ProcessLookupError, PermissionError):
+        except (ValueError, OSError, ProcessLookupError, PermissionError):
             # Proceso no existe o no es nuestro, limpiar archivo
             pid_file.unlink(missing_ok=True)
 
@@ -289,6 +285,15 @@ def _sentinel_status(memoria=None) -> None:
                     else:
                         # STATUS de arranque / parada
                         estado_raw = payload.get("estado", "desconocido")
+                        
+                        vivo = _sentinel_proc and _sentinel_proc.poll() is None
+                        if not vivo:
+                            from agent_core import _sentinel_alive, _read_sentinel_pid
+                            vivo = _sentinel_alive(_read_sentinel_pid())
+                            
+                        if vivo and estado_raw == "stopped":
+                            estado_raw = "starting..."
+                            
                         pid = payload.get("pid", "")
                         pid_str = f" (PID {pid})" if pid else ""
                         console.print(Panel(
@@ -592,10 +597,16 @@ def bucle_agente(motor_inicial: str, model_id_inicial: str | None) -> None:
         else:
             telegram_chat_id = None
             try:
-                user_input = Prompt.ask(
-                    f"[bold green]◆[/] [bold white]You[/]",
-                    console=console,
-                ).strip()
+                if _prompt_session:
+                    # prompt_toolkit maneja line wrapping y flechas mucho mejor en SSH
+                    user_input = _prompt_session.prompt(
+                        HTML("<b><ansigreen>◆</ansigreen> <ansiwhite>You</ansiwhite></b>: ")
+                    ).strip()
+                else:
+                    user_input = Prompt.ask(
+                        f"[bold green]◆[/] [bold white]You[/]",
+                        console=console,
+                    ).strip()
             except (KeyboardInterrupt, EOFError):
                 console.print("\n\n[cyan]  Hasta luego. 👋[/cyan]\n")
                 _cleanup(memoria)
