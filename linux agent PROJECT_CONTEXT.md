@@ -37,29 +37,34 @@
 
 ---
 
-## Arquitectura del proyecto (v2.1)
+## Arquitectura del proyecto (v3.0)
 
 ```
 linux_agent/
 ├── main.py               ← Entry point. Banner + menú motor + bucle chat + sentinel control
 ├── config.py             ← Carga .env, expone 40+ constantes tipadas
+├── agent_core.py         ← AgentSession: clase async que gestiona la sesión para la Web UI
 ├── tools.py              ← execute_local_bash(): subprocess + streaming + timeout + confirmación
 ├── tools_web.py          ← web_search(): DuckDuckGo via ddgs, sin API key
-├── tools_files.py        ← read_file() + write_file() con preview/confirmación
+├── tools_files.py        ← read_file() + write_file() con preview/confirmación + advertencia LLM archivos grandes
 ├── tools_remote.py       ← execute_ssh() via paramiko, wake_on_lan()
-├── sentinel.py           ← Daemon independiente: analiza sistema + LLM + bus SQLite + JIT fallback
+├── sentinel.py           ← Daemon independiente: analiza sistema + LLM + bus SQLite + WAL + JIT fallback inteligente
 ├── agentic_loop.py       ← AgenticTaskRunner: /task con reintentos + memoria + web
 ├── memory_consolidator.py← Consolida episodios en memoria al terminar /task
 ├── telegram_bot.py       ← Bot async Telegram: polling + InlineKeyboard + alertas
+├── web_server.py         ← FastAPI v3.0: REST + WebSocket chat + WebSocket eventos push
+├── web_server_start.py   ← Launcher del servidor web (usado en producción con nohup)
 ├── setup.py              ← Instalador automático (venv + deps + .env)
 ├── install_system.py     ← Instala deps en Python del sistema (sin venv)
 ├── test_agent.py         ← Suite de 19 tests: imports, bash, E2E LLM, memoria
+├── vm_diagnostics.py     ← [Windows] Diagnóstico completo de la VM via SSH
+├── vm_fix.py             ← [Windows] Repara procesos colgados, WAL, reinicia servicios
 │
 ├── llm/
 │   ├── __init__.py
 │   ├── base.py           ← ABC: AgenteIA, RespuestaAgente, ToolCallCanonico
-│   ├── history.py        ← HistorialCanonico (serializa a OpenAI/Gemini/Anthropic)
-│   ├── memory.py         ← MemoriaSemantica v2.1: SQLite + coseno + embeddings + TTL + Progressive Disclosure
+│   ├── history.py        ← HistorialCanonico + reducir() con anclaje de último prompt
+│   ├── memory.py         ← MemoriaSemantica v2.1: SQLite WAL + coseno + embeddings + TTL
 │   ├── router.py         ← crear_agente(), motores_disponibles(), fallback
 │   ├── tool_registry.py  ← HERRAMIENTAS[8 tools], SYSTEM_PROMPT dinámico, conversores
 │   ├── lmstudio_agent.py ← Adaptador LM Studio (OpenAI-compatible, JIT retry)
@@ -69,9 +74,15 @@ linux_agent/
 │   ├── grok_agent.py     ← Adaptador Grok xAI (OpenAI-compatible)
 │   └── anthropic_agent.py← Adaptador Anthropic Claude (SDK nativo)
 │
+├── web/                  ← Activos de la Web UI v3.0 (servidos desde /static)
+│   ├── index.html        ← SPA minimalista: chat + panel sistema + sentinel + memoria
+│   ├── style.css         ← Diseño dark + glassmorphism + responsive
+│   └── app.js            ← WebSocket chat, confirmaciones inteligentes (texto o clic)
+│
 ├── deploy_to_vm.py       ← [Windows] Sube archivos a VM via SSH/SFTP + tests
 ├── github_push.py        ← [Windows] Crea repo en GitHub API + git push desde VM
 ├── run_tests_on_vm.py    ← [Windows] Ejecuta test_agent.py en VM via SSH
+├── restart_vm_services.py← [Windows] Mata procesos colgados y reinicia web_server
 ├── sync.py               ← [Windows] deploy + tests + GitHub en un comando
 │
 ├── .env                  ← ⚠ GITIGNORED. Credenciales reales.
@@ -79,7 +90,7 @@ linux_agent/
 ├── requirements.txt      ← Deps del agente
 ├── requirements-dev.txt  ← Deps de dev: paramiko (solo Windows)
 ├── lm_models.json        ← Lista persistente de modelos LM Studio del usuario
-├── memory.db             ← ⚠ GITIGNORED. SQLite con memoria semántica vectorial
+├── memory.db             ← ⚠ GITIGNORED. SQLite WAL con memoria semántica vectorial
 ├── .sentinel.pid         ← ⚠ GITIGNORED. PID del proceso centinela activo
 └── sentinel.log          ← Log del centinela (append-only)
 ```
@@ -95,11 +106,11 @@ main.py
   └─ bucle_agente(motor)
         └─ crear_agente(motor) → router.py → instancia el adaptador correcto
         └─ agente.inicializar()
-        └─ crear_memoria(motor) → llm/memory.py → instancia MemoriaSemantica
+        └─ crear_memoria(motor) → llm/memory.py → instancia MemoriaSemantica (modo WAL)
         └─ [si SENTINEL_ENABLED] → _sentinel_start() como daemon PID-tracked
         └─ [bucle while True]
               └─ _procesar_alertas_sentinel() → verifica bus SQLite (no bloquea)
-              └─ Prompt.ask()  → input del usuario
+              └─ PromptSession.prompt()  → input del usuario (prompt_toolkit, historial persistente)
               └─ /comandos especiales → procesados directo (no van al LLM)
               └─ historial.agregar_usuario(user_input)   ← sin inyección RAG (v2.1)
               └─ _procesar_turno(agente, historial, require_confirmation, memoria)
@@ -362,21 +373,26 @@ python sentinel.py --once   # un solo ciclo (testing)
 
 ---
 
-## Estado actual (Abril 2026 — v2.1)
+## Estado actual (Abril 2026 — v3.0)
 
+- ✅ **Web UI v3.0** — FastAPI + WebSocket en puerto `7860`, accesible desde LAN
+- ✅ **Confirmaciones inteligentes** — En la Web UI: escribir `ok`/`y`/`n` en el chat aprueba/rechaza la ejecución sin hacer clic
+- ✅ **Memoria SQLite en modo WAL** — Múltiples procesos simultáneos (web + CLI + sentinel) sin bloqueos de DB
+- ✅ **prompt_toolkit en CLI** — Navegación multilínea completa por SSH (igual que PowerShell)
+- ✅ **Anclaje de contexto** — `reducir()` preserva siempre el último prompt del usuario ante Context Overflow
+- ✅ **Advertencia proactiva al LLM** — Al leer archivos grandes, el LLM recibe instrucción de usar grep/rangos
+- ✅ **JIT Fallback mejorado en Sentinel** — Consulta la API de LM Studio para obtener el modelo activo real
+- ✅ **Scripts de mantenimiento Windows** — `vm_diagnostics.py` y `vm_fix.py` para diagnóstico y reparación remota
 - ✅ **19/19 tests** pasando en VM `192.168.0.162`
-- ✅ **LM Studio** conectado en `192.168.0.142:1234` — `google/gemma-4-26b-a4b` como modelo principal
+- ✅ **LM Studio** conectado en `192.168.0.142:1234` — modelos activos: `google/gemma-4-31b`, `google/gemma-4-26b-a4b`, `nvidia/nemotron-3-nano-4b`
 - ✅ **8 herramientas** disponibles para el LLM (bash, web, archivos, SSH, WoL, memoria x2)
-- ✅ **GitHub** publicado: https://github.com/Juampeeh/linux-agent (commit `6ff4742`)
+- ✅ **GitHub** publicado: https://github.com/Juampeeh/linux-agent
 - ✅ **Progressive Disclosure** — memoria bajo demanda sin Context Overflow
 - ✅ **Sentinel daemon persistente** — sobrevive al cierre del chat (PID file)
-- ✅ **JIT Fallback de modelos** — el centinela auto-carga modelos si LM Studio está dormido
-- ✅ **Telegram bot** `@aldkcifnbot` — alertas automáticas, chat_id `458419035`
+- ✅ **Telegram bot** — alertas automáticas
 - ✅ **Agentic Loop** `/task` con reintentos: memoria → web → reintento
 - ✅ **Streaming bash** con `select` + timeout global
 - ✅ **System prompt dinámico** con fecha/hora del sistema inyectada
-- ✅ **Historial de comandos ↑↓** con readline persistente
-- ✅ **Fallback dinámico LM Studio** — si el modelo pedido no carga, usa el activo
 - ⬜ Heimdall (Fase 2) — preparado en código pero desactivado (HEIMDALL_ENABLED=False)
 - ⬜ Ollama en VM no probado (no instalado en la VM de prueba)
 

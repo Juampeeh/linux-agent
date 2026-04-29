@@ -103,7 +103,8 @@ class SentinelDB:
     def __init__(self, db_path: str) -> None:
         self._path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn = sqlite3.connect(db_path, check_same_thread=False, timeout=30.0)
+        self._conn.execute("PRAGMA journal_mode=WAL;")
         self._conn.executescript(_SCHEMA_SENTINEL)
         self._conn.commit()
 
@@ -267,8 +268,20 @@ def _llamar_llm(prompt: str, system: str | None = None) -> str:
                     pass
                 
                 if not fallback_model:
-                    # Fallback si el archivo no existe o está vacío
-                    fallback_model = os.getenv("SENTINEL_LLM_MODEL") or os.getenv("LMSTUDIO_MODEL") or "llama-3.2-3b-instruct"
+                    # Intentar obtener un modelo activo directamente desde LM Studio API
+                    try:
+                        import httpx as _hx
+                        _models_resp = _hx.get(f"{_LLM_URL}/models", timeout=5)
+                        if _models_resp.status_code == 200:
+                            _mdata = _models_resp.json().get("data", [])
+                            if _mdata:
+                                fallback_model = _mdata[0]["id"]
+                    except Exception:
+                        pass
+
+                if not fallback_model:
+                    # Ultimo fallback si todo lo anterior falla
+                    fallback_model = os.getenv("SENTINEL_LLM_MODEL") or os.getenv("LMSTUDIO_MODEL") or ""
                 
                 if fallback_model:
                     logger.info(f"Forzando carga del modelo: {fallback_model}")
