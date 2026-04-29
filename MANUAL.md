@@ -1455,6 +1455,18 @@ Después de ejecutar el deploy o `setup_autostart.sh`, aparecen dos íconos en e
 
 ---
 
+### ⌨️ Alias de Terminal (SSH)
+
+Si usás la terminal por SSH, podés usar estos comandos directos desde cualquier carpeta:
+
+- **`agente`** → Abre el Agente CLI (terminal interactiva)
+- **`iniciar_agente`** o **`iniciar agente`** → Inicia los servicios (Web UI + Centinela)
+
+*(Nota: Después de instalar, puede que necesites cerrar tu conexión SSH y volver a entrar, o ejecutar `source ~/.bashrc` para que los comandos se activen).*
+
+---
+
+
 ### 🔄 Autostart al boot (systemd)
 
 Al iniciar la VM, el servicio `linux-agent` levanta automáticamente:

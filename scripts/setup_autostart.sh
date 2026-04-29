@@ -93,6 +93,32 @@ if command -v gio &>/dev/null; then
 fi
 ok "Shortcut 'Agente CLI' creado en el Desktop"
 
+# ── Alias para la terminal SSH ─────────────────────────────────────────────────
+info "Configurando alias de terminal en ~/.bashrc..."
+BASHRC="$HOME/.bashrc"
+BLOCK_START="# >>> Linux Agent Aliases >>>"
+BLOCK_END="# <<< Linux Agent Aliases <<<"
+
+if grep -q "$BLOCK_START" "$BASHRC"; then
+    # Remover el bloque viejo
+    sed -i "/$BLOCK_START/,/$BLOCK_END/d" "$BASHRC"
+fi
+
+cat >> "$BASHRC" << 'EOF'
+# >>> Linux Agent Aliases >>>
+alias agente='bash ~/linux_agent/scripts/start_agent_cli.sh'
+alias iniciar_agente='bash ~/linux_agent/scripts/start_services.sh'
+iniciar() {
+    if [ "$1" = "agente" ]; then
+        bash ~/linux_agent/scripts/start_services.sh
+    else
+        echo "Comando no reconocido: iniciar $1"
+    fi
+}
+# <<< Linux Agent Aliases <<<
+EOF
+ok "Alias configurados (agente, iniciar_agente, iniciar agente)"
+
 # ── Instalar servicio systemd ──────────────────────────────────────────────────
 info "Instalando servicio systemd '$SERVICE_NAME'..."
 
