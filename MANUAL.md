@@ -1,6 +1,6 @@
 # 📖 Manual de Usuario — Linux Local AI Agent
 
-> **Versión:** 3.0.0 | **Plataforma:** Ubuntu Linux (VM/físico) + Windows (desarrollo)
+> **Versión:** 3.1.0 | **Plataforma:** Ubuntu Linux (VM/físico) + Windows (desarrollo)
 > **Repositorio:** https://github.com/Juampeeh/linux-agent
 
 ---
@@ -9,7 +9,7 @@
 
 1. [Instalación desde cero](#1-instalación-desde-cero)
 2. [Inicio rápido](#2-inicio-rápido)
-3. [Modo seguro vs. modo autónomo](#3-modo-seguro-vs-modo-autónomo)
+3. [Sistema de modos de permisos](#3-sistema-de-modos-de-permisos)
 4. [Comandos del CLI](#4-comandos-del-cli)
 5. [Configurar motores de IA](#5-configurar-motores-de-ia)
    - 5.1 [LM Studio en red LAN](#51-lm-studio-en-red-lan)
@@ -210,38 +210,46 @@ python main.py
 
 ---
 
-## 3. Modo seguro vs. modo autónomo
+## 3. Sistema de modos de permisos
 
-Este es **el control más importante** del agente. Determina si puede ejecutar comandos bash sin pedirte permiso.
+Este es **el control más importante** del agente. Determina cuándo el agente puede ejecutar comandos sin pedirte permiso. Desde v3.1 hay **tres modos** en lugar de dos:
 
-### 🛡️ Modo seguro (por defecto)
+| Modo | Símbolo | Comportamiento |
+|------|---------|----------------|
+| **Inteligente** | 🧠 | (**Default**) Ejecuta comandos de lectura/estado automáticamente. Confirma solo los destructivos. |
+| **Seguro** | 🛡️ | Confirma **todos** los comandos bash/write/ssh antes de ejecutar. |
+| **Autónomo** | ⚡ | Ejecuta todo sin confirmación. Para tareas largas automatizadas. |
 
-- **Indicador:** panel con `🔒 Modo: 🛡 MODO SEGURO`
-- Pausa y pregunta **`¿Ejecutar este comando? [Y/n]`** antes de cada comando
-  - `Enter` o `Y` → ejecuta
-  - `n` → cancela (el agente lo registra pero no ejecuta)
+### 🧠 Modo Inteligente (recomendado)
 
-### ⚠️ Modo autónomo
+El agente analiza el comando antes de ejecutarlo:
+- **Auto-ejecuta** sin preguntar: `ls`, `cat`, `ps`, `df`, `free`, `top`, `grep`, `find`, `journalctl`, `systemctl status`, `netstat`, `ip`, `uname`, `uptime`, `curl` (GET), etc.
+- **Pide confirmación** antes de: `rm`, `apt install/remove`, `systemctl start/stop/restart`, `kill`, `chmod`, `chown`, `mv`, `sed -i`, `dd`, `reboot`, `shutdown`, `pip install`, etc.
 
-- **Indicador:** panel amarillo `⚠ MODO AUTÓNOMO ACTIVADO`
-- Ejecuta comandos directamente sin confirmar
-- Ideal para tareas largas (`sudo apt install`, instalaciones, scripts)
-- ⚠️ El agente puede ejecutar comandos destructivos sin aviso
+### 🛡️ Modo Seguro
 
-### Toggle en tiempo real
+Pausa y muestra un modal/prompt `¿Ejecutar este comando? [Y/n]` antes de **cada** comando. Ideal si querés control total sobre cada acción.
+
+### ⚡ Modo Autónomo
+
+Ejecuta comandos directamente sin confirmar. Ideal para tareas largas (`/task`) donde no querés interrupciones.
+
+### Cambiar modo
+
+**Desde el CLI:** `/auto` o `/confirm` cicla entre los tres modos en orden: Inteligente → Seguro → Autónomo → Inteligente.
+
+**Desde la Web UI:** El botón en el header cicla entre los tres modos al hacer click.
 
 ```
-◆ You: /auto
+◆ You: /auto   ← cicla al siguiente modo
 ```
-
-Escribe `/auto` en cualquier momento para alternar entre modos. `/confirm` es un alias.
 
 ### Configurar el modo por defecto
 
 ```env
 # En ~/linux_agent/.env:
-REQUIRE_CONFIRMATION=True    # Arranca en modo seguro (recomendado)
-REQUIRE_CONFIRMATION=False   # Arranca en modo autónomo
+REQUIRE_CONFIRMATION=True    # Arranca en modo Seguro
+REQUIRE_CONFIRMATION=False   # Arranca en modo Inteligente (default)
 ```
 
 ---
@@ -1310,14 +1318,16 @@ http://192.168.0.162:7860   ← ejemplo con la VM de siempre
 |---------|-------------|
 | **Chat en tiempo real** | WebSocket bidireccional, respuestas en streaming |
 | **Tool call cards** | Cada herramienta que usa el agente se muestra como tarjeta colapsable |
-| **Modal de confirmación** | En modo seguro, un popup pide aprobación antes de ejecutar comandos bash |
+| **Modal de confirmación** | Popup pide aprobación antes de ejecutar comandos según el modo activo |
+| **Selector de modelo LM Studio** | Panel lateral para ver y cambiar el modelo activo de LM Studio con un click |
+| **3 modos de permisos** | Botón en header cicla: 🧠 Inteligente → 🛡 Seguro → ⚡ Autónomo |
 | **Panel de sistema** | CPU, RAM, Disco, Uptime, Load average (actualizado cada 15s) |
 | **Panel del centinela** | Estado, último ciclo, botón start/stop, log en modal |
 | **Panel de memoria** | Stats de la DB, búsqueda semántica, purgar TTL |
 | **Selector de motor** | Cambiar motor de IA desde un dropdown sin reiniciar |
-| **Comandos rápidos** | Botones `/auto`, `/clear`, `/memory stats`, `/sentinel status`, `/ayuda` |
-| **Notificaciones push** | Alertas del centinela (anomalías) aparecen como toast automáticamente |
-| **Responsive** | Funciona en celular (el panel lateral se oculta en pantallas pequeñas) |
+| **Indicador de escritura** | Animación de puntos mientras el agente procesa |
+| **Notificaciones push** | Alertas del centinela aparecen como toast automáticamente |
+| **Responsive** | Panel lateral se oculta en pantallas pequeñas |
 
 ### Arquitectura de la Web UI
 
@@ -1357,22 +1367,35 @@ Browser (PC/celular)
 | `web/app.js` | Lógica frontend vanilla JS (WebSocket, modales, métricas) |
 | `web_server_start.py` | Helper para lanzar el servidor (generado en VM) |
 
-### Flujo de confirmación (modo seguro)
+### Flujo de confirmación (modo inteligente / seguro)
 
-Cuando el agente quiere ejecutar `execute_local_bash`, `write_file` o `execute_ssh`
-en modo seguro, el browser muestra un **modal de confirmación**:
+Cuando el agente quiere ejecutar `execute_local_bash`, `write_file` o `execute_ssh`,
+el comportamiento depende del modo activo:
+
+- **🧠 Inteligente:** solo muestra el modal si el comando es destructivo (ej: `rm`, `apt install`, `systemctl restart`). Comandos de lectura se ejecutan directamente.
+- **🛡 Seguro:** siempre muestra el modal.
+- **⚡ Autónomo:** nunca muestra el modal.
 
 ```
 ┌───────────────────────────────────────┐
 │ Confirmar: execute_local_bash         │
 │ El agente quiere ejecutar:             │
-│ $ hostname                             │
+│ $ apt install nginx                    │
 │                                        │
 │  [✅ Ejecutar]  [❌ Cancelar]           │
 └───────────────────────────────────────┘
 ```
 
-Si no respondes en 120 segundos, el comando se cancela automáticamente.
+Si no respondés en 120 segundos, el comando se cancela automáticamente.
+
+### Selector de modelo LM Studio
+
+El panel lateral **"Modelo LM Studio"** muestra todos los modelos de chat cargados en LM Studio en tiempo real. Al hacer click en un modelo se cambia en caliente sin reiniciar el servidor ni el agente.
+
+- Se refresca automáticamente cada 60 segundos.
+- El botón 🔄 fuerza un refresco manual.
+- El modelo activo se resalta en violeta.
+- Los modelos de embeddings se excluyen automáticamente de la lista.
 
 ---
 
@@ -1381,7 +1404,7 @@ Si no respondes en 120 segundos, el comando se cancela automáticamente.
 Agregar al `.env` para configurar la Web UI:
 
 ```env
-# ── Web UI (v3.0) ──────────────────────────────────
+# ── Web UI (v3.1) ──────────────────────────────────
 WEB_ENABLED=False       # True para habilitar con la flag --web
 WEB_PORT=7860           # Puerto del servidor
 WEB_HOST=0.0.0.0        # Escucha en toda la red (0.0.0.0) o solo local (127.0.0.1)
@@ -1398,4 +1421,4 @@ Si querés acceder a la UI desde fuera de tu LAN:
 
 ---
 
-*Manual Linux Local AI Agent v3.0.0 — https://github.com/Juampeeh/linux-agent*
+*Manual Linux Local AI Agent v3.1.0 — https://github.com/Juampeeh/linux-agent*

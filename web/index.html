@@ -25,9 +25,9 @@
         <label class="ctrl-label">Motor</label>
         <select id="motor-select" title="Cambiar motor de IA"></select>
       </div>
-      <button id="btn-mode" class="mode-btn safe" title="Toggle modo seguro/autónomo">
+      <button id="btn-mode" class="mode-btn smart" title="Ciclar modo: Inteligente → Seguro → Autónomo">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        <span id="mode-label">Seguro</span>
+        <span id="mode-label">Inteligente</span>
       </button>
       <div id="connection-dot" class="connection-dot disconnected" title="Estado de conexión"></div>
     </div>
@@ -69,7 +69,23 @@
 
     <!-- Panel lateral -->
     <aside id="side-panel">
+      <!-- Modelo LM Studio -->
+      <div class="panel-card" id="model-card">
+        <div class="card-header">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+          <h2>Modelo LM Studio</h2>
+          <button id="btn-refresh-models" class="icon-btn" title="Actualizar lista de modelos">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          </button>
+        </div>
+        <div class="card-body">
+          <div id="model-current" class="model-current-label">Cargando...</div>
+          <div id="model-list" class="model-list"></div>
+        </div>
+      </div>
+
       <!-- Sistema -->
+
       <div class="panel-card" id="system-card">
         <div class="card-header">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
@@ -145,6 +161,7 @@
       <h3 id="confirm-title">Confirmar ejecución</h3>
       <p id="confirm-description" class="confirm-desc">El agente quiere ejecutar el siguiente comando:</p>
       <pre id="confirm-command" class="confirm-cmd"></pre>
+      <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px; text-align: center;">(También podés escribir 'ok', 'y', o 'n' directamente en el chat)</p>
       <div class="confirm-actions">
         <button id="btn-confirm-yes" class="confirm-btn yes">✅ Ejecutar</button>
         <button id="btn-confirm-no"  class="confirm-btn no">❌ Cancelar</button>

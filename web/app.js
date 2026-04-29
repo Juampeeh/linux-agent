@@ -38,6 +38,10 @@ const els = {
   diskBar:   $('disk-bar'),  diskValue: $('disk-value'),
   uptimeLoad: $('uptime-load'),
   btnRefreshSystem: $('btn-refresh-system'),
+  // Model card
+  modelCurrent:     $('model-current'),
+  modelList:        $('model-list'),
+  btnRefreshModels: $('btn-refresh-models'),
   // Sentinel
   sentinelBadge:   $('sentinel-status-badge'),
   sentinelSummary: $('sentinel-summary'),
@@ -63,6 +67,10 @@ const els = {
   btnLogClose:   $('btn-log-close'),
   toastContainer: $('toast-container'),
 };
+
+// Modo de permisos actual
+let currentMode = 'smart'; // smart | safe | auto
+
 
 // =============================================================================
 // WebSocket — Chat
@@ -164,17 +172,25 @@ function handleChatEvent(evt) {
       break;
 
     case 'error':
-      addSystemMessage(escapeHtml(evt.text), 'error');
+      addSystemMessage(markdownToHtml(evt.text), 'error');
       finishAgentMessage();
+      isBusy = false;
+      updateSendBtn();
       break;
 
     case 'mode_change':
-      applyModeChange(evt.seguro);
-      addSystemMessage(`Modo: ${evt.text}`, evt.seguro ? 'success' : 'info');
+      applyModeChange(evt.mode || (evt.seguro ? 'safe' : 'auto'));
+      addSystemMessage(evt.text, 'success');
       break;
 
     case 'motor_change':
       addSystemMessage(`Motor: ${evt.text}`, 'success');
+      break;
+
+    case 'model_change':
+      addSystemMessage(`🧠 ${evt.text}`, 'success');
+      // Refrescar lista de modelos para marcar el nuevo activo
+      fetchLMStudioModels();
       break;
 
     case 'sentinel_update':
@@ -211,6 +227,7 @@ function handleChatEvent(evt) {
       isBusy = false;
       updateSendBtn();
       scrollToBottom();
+      hideTypingIndicator();
       break;
   }
 }
@@ -369,6 +386,7 @@ function sendMessage(text) {
   updateSendBtn();
   currentAgentMsg = null;
   currentTypingEl = null;
+  showTypingIndicator();
   chatWs.send(JSON.stringify({ type: 'message', text }));
 }
 
@@ -377,6 +395,23 @@ function handleSend() {
   if (!text) return;
   els.chatInput.value = '';
   autoResize(els.chatInput);
+
+  if (pendingConfirm) {
+    const t = text.toLowerCase();
+    if (['y', 'yes', 'ok', 's', 'si', 'sí'].includes(t)) {
+      addUserMessage(text);
+      resolveConfirm(true);
+      showToast('Comando aprobado ✅', 'success', 2000);
+      return;
+    }
+    if (['n', 'no', 'cancelar', 'cancel'].includes(t)) {
+      addUserMessage(text);
+      resolveConfirm(false);
+      showToast('Comando cancelado ❌', 'info', 2000);
+      return;
+    }
+  }
+
   sendMessage(text);
 }
 
@@ -405,6 +440,10 @@ function resolveConfirm(approved) {
   }));
   els.confirmModal.classList.add('hidden');
   pendingConfirm = null;
+  // Mostrar feedback inmediato en el chat
+  const msg = approved ? '✅ Comando aprobado — ejecutando...' : '❌ Ejecución cancelada por el usuario.';
+  addSystemMessage(msg, approved ? 'success' : 'info');
+  if (approved) showTypingIndicator();
 }
 
 // =============================================================================
@@ -423,8 +462,10 @@ function applyStatus(status) {
     if (key === status.motor_key) opt.selected = true;
     els.motorSelect.appendChild(opt);
   }
-  // Modo
-  applyModeChange(status.require_confirmation);
+  // Modo de permisos
+  const mode = status.permission_mode || (status.require_confirmation ? 'safe' : 'auto');
+  applyModeChange(mode);
+  currentMode = mode;
   // Memoria
   const mem = status.memoria || {};
   updateMemoryPanel(mem.stats || {});
@@ -434,10 +475,21 @@ function applyStatus(status) {
   updateSentinelBadge(status.sentinel?.corriendo);
 }
 
-function applyModeChange(seguro) {
-  els.btnMode.className = `mode-btn ${seguro ? 'safe' : 'auto'}`;
-  els.modeLabel.textContent = seguro ? 'Seguro' : 'Autónomo';
+function applyModeChange(mode) {
+  // Soporte para llamadas legacy (bool) y nuevas (string)
+  if (typeof mode === 'boolean') mode = mode ? 'safe' : 'auto';
+  currentMode = mode;
+  const configs = {
+    smart: { cls: 'smart', label: '🧠 Inteligente', title: 'Modo Inteligente: confirma solo comandos destructivos' },
+    safe:  { cls: 'safe',  label: '🛡 Seguro',       title: 'Modo Seguro: confirma todos los comandos' },
+    auto:  { cls: 'auto',  label: '⚡ Autónomo',     title: 'Modo Autónomo: ejecuta sin confirmación' },
+  };
+  const cfg = configs[mode] || configs.smart;
+  els.btnMode.className = `mode-btn ${cfg.cls}`;
+  els.modeLabel.textContent = cfg.label;
+  els.btnMode.title = cfg.title;
 }
+
 
 function updateSentinelBadge(corriendo) {
   els.sentinelBadge.textContent = corriendo ? 'Corriendo' : 'Detenido';
@@ -464,6 +516,71 @@ function updateMemoryPanel(stats) {
 }
 
 // =============================================================================
+// Selector de modelos LM Studio
+// =============================================================================
+
+let _currentModelId = null;
+
+async function fetchLMStudioModels() {
+  try {
+    const r = await fetch('/api/lmstudio/models');
+    const d = await r.json();
+    renderModelList(d);
+  } catch {
+    if (els.modelList) els.modelList.innerHTML = '<div style="font-size:11px;color:var(--text-muted)">LM Studio no disponible</div>';
+  }
+}
+
+function renderModelList(data) {
+  if (!els.modelList) return;
+  _currentModelId = data.current;
+
+  // Actualizar label del modelo actual
+  if (els.modelCurrent) {
+    els.modelCurrent.textContent = data.current || 'Autodetectar';
+  }
+
+  const models = data.chat_models || [];
+  els.modelList.innerHTML = '';
+
+  if (!models.length) {
+    els.modelList.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:4px">Sin modelos de chat disponibles</div>';
+    return;
+  }
+
+  for (const modelId of models) {
+    const item = document.createElement('div');
+    item.className = `model-item${modelId === _currentModelId ? ' active' : ''}`;
+    item.title = modelId;
+    item.innerHTML = `<span class="model-dot"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis">${modelId}</span>`;
+    item.addEventListener('click', () => switchModel(modelId));
+    els.modelList.appendChild(item);
+  }
+}
+
+async function switchModel(modelId) {
+  if (modelId === _currentModelId) return;
+  showToast(`Cambiando a ${modelId.split('/').pop()}...`, 'info', 3000);
+  try {
+    const r = await fetch('/api/lmstudio/model', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ model_id: modelId }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      _currentModelId = modelId;
+      showToast(`✅ ${d.text}`, 'success');
+      renderModelList({ current: modelId, chat_models: Array.from(els.modelList.querySelectorAll('.model-item')).map(el => el.title) });
+    } else {
+      showToast(`❌ ${d.text}`, 'alert');
+    }
+  } catch {
+    showToast('Error al cambiar modelo', 'alert');
+  }
+}
+
+// =============================================================================
 // Métricas del sistema
 // =============================================================================
 
@@ -475,6 +592,7 @@ async function fetchSystemMetrics() {
     applySystemMetrics(d);
   } catch {}
 }
+
 
 function applySystemMetrics(m) {
   setBar(els.cpuBar,  els.cpuValue,  m.cpu_percent,  '%');
@@ -566,8 +684,49 @@ async function showSentinelLog() {
 }
 
 // =============================================================================
-// Toast notificaciones
+// Typing indicator
 // =============================================================================
+
+let _typingIndicatorEl = null;
+
+function showTypingIndicator() {
+  hideTypingIndicator();
+  _typingIndicatorEl = document.createElement('div');
+  _typingIndicatorEl.className = 'msg agent typing-indicator-wrapper';
+  _typingIndicatorEl.innerHTML = `
+    <div class="msg-avatar">🤖</div>
+    <div class="msg-body">
+      <div class="msg-role">Agente</div>
+      <div class="typing-dots"><span></span><span></span><span></span></div>
+    </div>`;
+  els.chatMessages.appendChild(_typingIndicatorEl);
+  scrollToBottom();
+}
+
+function hideTypingIndicator() {
+  if (_typingIndicatorEl) {
+    _typingIndicatorEl.remove();
+    _typingIndicatorEl = null;
+  }
+}
+
+// Ocultar el indicador tan pronto como el agente empiece a emitir contenido real
+const _origEnsureAgentMessage = ensureAgentMessage;
+// Override para ocultar el indicador al crear el primer mensaje del agente
+function ensureAgentMessage() {
+  hideTypingIndicator();
+  if (!currentAgentMsg) {
+    currentAgentMsg = document.createElement('div');
+    currentAgentMsg.className = 'msg agent';
+    currentAgentMsg.innerHTML = `
+      <div class="msg-avatar">🤖</div>
+      <div class="msg-body">
+        <div class="msg-role">Agente</div>
+        <div class="msg-text agent-content"></div>
+      </div>`;
+    els.chatMessages.appendChild(currentAgentMsg);
+  }
+}
 
 function showToast(msg, type = 'info', durationMs = 4000) {
   const t = document.createElement('div');
@@ -678,7 +837,26 @@ els.btnTask.addEventListener('click', () => {
   input.focus();
 });
 
-els.btnMode.addEventListener('click', () => sendMessage('/auto'));
+els.btnMode.addEventListener('click', () => {
+  // Ciclar modo via API REST (smart → safe → auto → smart)
+  const next = { smart: 'safe', safe: 'auto', auto: 'smart' };
+  const newMode = next[currentMode] || 'smart';
+  fetch('/api/mode', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ mode: newMode }),
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.ok) {
+      applyModeChange(newMode);
+      showToast(d.text, 'success');
+    } else {
+      showToast(d.text || 'Error', 'alert');
+    }
+  })
+  .catch(() => showToast('Error al cambiar modo', 'alert'));
+});
 
 els.motorSelect.addEventListener('change', e => {
   const motor = e.target.value;
@@ -693,6 +871,7 @@ els.motorSelect.addEventListener('change', e => {
 });
 
 els.btnRefreshSystem.addEventListener('click', fetchSystemMetrics);
+els.btnRefreshModels.addEventListener('click', fetchLMStudioModels);
 
 els.btnSentinelStart.addEventListener('click', () => sendMessage('/sentinel start'));
 els.btnSentinelStop.addEventListener('click',  () => sendMessage('/sentinel stop'));
@@ -729,6 +908,10 @@ document.querySelectorAll('.quick-cmd').forEach(btn => {
   connectEvents();
   await fetchSystemMetrics();
   setInterval(fetchSystemMetrics, SYSTEM_POLL_MS);
+  // Cargar modelos LM Studio al iniciar
+  await fetchLMStudioModels();
+  // Refrescar modelos cada 60s
+  setInterval(fetchLMStudioModels, 60000);
 
   // Actualizar status del sentinel al cargar
   try {
@@ -738,3 +921,4 @@ document.querySelectorAll('.quick-cmd').forEach(btn => {
     if (s.sentinel) updateSentinelPanel(s.sentinel);
   } catch {}
 })();
+
