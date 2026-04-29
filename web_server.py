@@ -1,19 +1,22 @@
 # =============================================================================
-# web_server.py — Servidor Web FastAPI para Linux Local AI Agent v3.0
+# web_server.py — Servidor Web FastAPI para Linux Local AI Agent v3.1
 #
 # Expone:
-#   GET  /                  → web/index.html
-#   GET  /api/status        → estado de la sesión
-#   GET  /api/system        → métricas del sistema (CPU/RAM/Disco)
-#   GET  /api/models        → lista de modelos LM Studio
-#   GET  /api/sentinel/log  → últimas N líneas del sentinel.log
-#   GET  /api/memory/search → búsqueda en memoria
-#   POST /api/switch        → cambiar motor
-#   POST /api/sentinel      → start/stop
-#   POST /api/memory/purge  → purgar TTL
-#   POST /api/memory/clear  → borrar memoria
-#   WS   /ws/chat           → WebSocket de chat (bidireccional streaming)
-#   WS   /ws/events         → WebSocket de alertas push (sentinel, Telegram)
+#   GET  /                      → web/index.html
+#   GET  /api/status            → estado de la sesión
+#   GET  /api/system            → métricas del sistema (CPU/RAM/Disco)
+#   GET  /api/models            → lista de modelos LM Studio guardados
+#   GET  /api/lmstudio/models   → modelos activos en LM Studio (en tiempo real)
+#   GET  /api/sentinel/log      → últimas N líneas del sentinel.log
+#   GET  /api/memory/search     → búsqueda en memoria
+#   POST /api/switch            → cambiar motor
+#   POST /api/lmstudio/model    → cambiar modelo LM Studio en caliente
+#   POST /api/mode              → cambiar modo de permisos (smart/safe/auto)
+#   POST /api/sentinel          → start/stop
+#   POST /api/memory/purge      → purgar TTL
+#   POST /api/memory/clear      → borrar memoria
+#   WS   /ws/chat               → WebSocket de chat (bidireccional streaming)
+#   WS   /ws/events             → WebSocket de alertas push (sentinel, Telegram)
 # =============================================================================
 
 from __future__ import annotations
@@ -162,6 +165,67 @@ async def api_models():
         except Exception:
             pass
     return JSONResponse({"models": []})
+
+
+@app.get("/api/lmstudio/models")
+async def api_lmstudio_models():
+    """Lista de modelos activos en LM Studio en tiempo real (desde la API)."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{cfg.LMSTUDIO_BASE_URL}/models",
+                                 headers={"Authorization": "Bearer lm-studio"})
+            if r.status_code == 200:
+                data = r.json().get("data", [])
+                # Separar modelos de chat de los de embeddings
+                _embed_kw = ("embed", "embedding", "nomic", "reranker", "bge-", "e5-")
+                chat_models = [m["id"] for m in data
+                               if not any(k in m["id"].lower() for k in _embed_kw)]
+                embed_models = [m["id"] for m in data
+                                if any(k in m["id"].lower() for k in _embed_kw)]
+                return JSONResponse({
+                    "ok": True,
+                    "chat_models": chat_models,
+                    "embed_models": embed_models,
+                    "current": _session.model_id if _session else None,
+                })
+    except Exception as e:
+        pass
+    return JSONResponse({"ok": False, "chat_models": [], "embed_models": [], "error": "LM Studio no disponible"})
+
+
+@app.post("/api/lmstudio/model")
+async def api_lmstudio_switch_model(body: dict):
+    """Cambia el modelo de LM Studio en caliente."""
+    if not _session:
+        raise HTTPException(503, "Sesión no inicializada")
+    model_id = body.get("model_id", "").strip()
+    if not model_id:
+        raise HTTPException(400, "Campo 'model_id' requerido")
+    result = await _session.cambiar_modelo(model_id)
+    if result.get("ok"):
+        await _broadcast_event({"type": "status_update", "status": _session.get_status()})
+        await _broadcast_event({"type": "model_change", "model_id": model_id,
+                                "text": result["text"]})
+    return JSONResponse(result)
+
+
+@app.post("/api/mode")
+async def api_mode(body: dict):
+    """Cambia el modo de permisos: smart | safe | auto."""
+    if not _session:
+        raise HTTPException(503, "Sesión no inicializada")
+    mode = body.get("mode", "").strip().lower()
+    result = _session.set_permission_mode(mode)
+    if result.get("ok"):
+        await _broadcast_event({"type": "status_update", "status": _session.get_status()})
+        await _broadcast_event({"type": "mode_change",
+                                "mode": mode,
+                                "seguro": mode == "safe",
+                                "text": result["text"]})
+    return JSONResponse(result)
+
+
 
 
 @app.get("/api/sentinel/log")

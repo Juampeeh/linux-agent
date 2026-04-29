@@ -39,6 +39,87 @@ if TYPE_CHECKING:
 
 MAX_ITERACIONES = 10
 
+# ── Modos de permiso ──────────────────────────────────────────────────────────
+# SMART: confirma solo comandos destructivos (default recomendado)
+# SAFE:  confirma todo
+# AUTO:  no confirma nada
+MODO_SMART = "smart"
+MODO_SAFE  = "safe"
+MODO_AUTO  = "auto"
+
+# Patrones de comandos de sólo lectura / informativos (no necesitan confirmación en modo SMART)
+import re as _re
+_READ_PATTERNS = _re.compile(
+    r'^(\s*sudo\s+)?(cat|less|more|head|tail|tac|bat)\s'
+    r'|^\s*ls(\s|$)'
+    r'|^\s*(ps|top|htop|btop|atop)(\s|$)'
+    r'|^\s*(df|free|du)(\s|$)'
+    r'|^\s*(uname|hostname|whoami|id|who|w)(\s|$)'
+    r'|^\s*(uptime|date|cal|timedatectl)(\s|$)'
+    r'|^\s*(echo|printf)\s'
+    r'|^\s*(grep|egrep|fgrep|rg)\s'
+    r'|^\s*(find|locate|which|whereis|type)\s'
+    r'|^\s*(stat|file|wc|sort|uniq|cut|awk)(\s|$)'
+    r'|^\s*(netstat|ss|ip)(\s|$)'
+    r'|^\s*(ping|traceroute|nslookup|dig|host)\s'
+    r'|^\s*(journalctl|dmesg)(\s|$)'
+    r'|^\s*(systemctl|service)\s+(status|is-active|is-enabled|list-units|show)(\s|$)'
+    r'|^\s*(env|printenv|export\s+-p)(\s|$)'
+    r'|^\s*(lsblk|lspci|lsusb|lscpu|lshw|lsmod|lsof|lsattr)(\s|$)'
+    r'|^\s*(ifconfig|ip\s+addr|ip\s+route|ip\s+link)(\s|$)'
+    r'|^\s*curl\s+(-s\s+)?-?-?(X\s+GET|X\s+get|get)|(curl\s+-[a-zA-Z]*s)'
+    r'|^\s*(history|alias)(\s|$)'
+    r'|^\s*(pwd)(\s|$)'
+    r'|^\s*(nmap\s+-s[Vnp])'
+    r'|^\s*(last|lastlog|faillog|who)(\s|$)',
+    _re.IGNORECASE
+)
+
+_DESTRUCTIVE_PATTERNS = _re.compile(
+    r'\brm\s'
+    r'|^\s*>\s'          # redirect write
+    r'|>>\s*/'           # append a ruta
+    r'|\|\s*tee\s'       # tee a archivo
+    r'|\bchmod\b|\bchown\b'
+    r'|\b(apt|apt-get|yum|dnf|pacman|snap|flatpak)\s+(install|remove|purge|upgrade|autoremove)\b'
+    r'|\b(pip|pip3|pip2|npm|yarn|cargo|gem|composer)\s+install\b'
+    r'|\b(systemctl|service)\s+(start|stop|restart|enable|disable|mask|daemon-reload)\b'
+    r'|\b(kill|pkill|killall|killall5)\b'
+    r'|\b(reboot|shutdown|halt|poweroff|init\s+0|init\s+6)\b'
+    r'|\b(dd|mkfs|format|fdisk|parted|gdisk)\b'
+    r'|\b(mount|umount|chroot)\b'
+    r'|\b(useradd|userdel|usermod|passwd|groupadd|groupdel|chpasswd)\b'
+    r'|\bvisudo\b|\bcrontab\s+-[erd]\b'
+    r'|\bmv\s'
+    r'|\bcp\s+.*-[fF]'   # cp force
+    r'|\btar\s+.*--?x'   # extract (puede sobrescribir)
+    r'|\bunzip\b|\buntar\b'
+    r'|\bmkdir\b'        # crear dirs — confirmar por precaución
+    r'|\btouch\s.*/'     # touch en rutas absolutas
+    r'|\bsed\s+.*-i'     # sed in-place
+    r'|\bawk\s+.*print.*>|\bawk\s+.*>{2}'
+    r'|\bwget\s+.*-O\b'  # wget con output
+    r'|\bcurl\s+.*-[oO]\b'  # curl con output
+    r'|\bsudo\s',
+    _re.IGNORECASE
+)
+
+
+def _es_comando_seguro(cmd: str) -> bool:
+    """True si el comando parece de solo lectura/informativo y no tiene patrones destructivos."""
+    cmd_stripped = cmd.strip()
+    # Si tiene patrones destructivos, nunca es seguro
+    if _DESTRUCTIVE_PATTERNS.search(cmd_stripped):
+        return False
+    # Si tiene redirecciones de escritura, no es seguro
+    if _re.search(r'(?<!<)>(?!>?\s*/dev/null)', cmd_stripped):
+        return False
+    # Si coincide con patrones de solo lectura, es seguro
+    if _READ_PATTERNS.match(cmd_stripped):
+        return True
+    # Por defecto: si no sabemos, pedir confirmación
+    return False
+
 
 class AgentSession:
     """
@@ -50,7 +131,11 @@ class AgentSession:
     def __init__(self, motor: str = cfg.DEFAULT_ENGINE, model_id: str | None = None):
         self.motor: str = motor
         self.model_id: str | None = model_id
-        self.require_confirmation: bool = cfg.REQUIRE_CONFIRMATION
+        # Modo de permisos: smart (default) | safe | auto
+        _default = getattr(cfg, "PERMISSION_MODE", MODO_SMART)
+        self.permission_mode: str = _default if not cfg.REQUIRE_CONFIRMATION else MODO_SAFE
+        # require_confirmation se mantiene por compatibilidad CLI
+        self.require_confirmation: bool = self.permission_mode != MODO_AUTO
 
         self.agente: AgenteIA | None = None
         self.historial: HistorialCanonico | None = None
@@ -99,8 +184,10 @@ class AgentSession:
         return {
             "motor": self.agente.nombre_motor if self.agente else "no inicializado",
             "motor_key": self.motor,
+            "model_id": self.model_id,
             "motores_disponibles": motores_disponibles(),
-            "require_confirmation": self.require_confirmation,
+            "permission_mode": self.permission_mode,
+            "require_confirmation": self.permission_mode != MODO_AUTO,
             "memoria": {
                 "activa": bool(self.memoria and self.memoria.activa),
                 "provider": getattr(self.memoria, "_provider", None) if self.memoria else None,
@@ -110,7 +197,7 @@ class AgentSession:
                 "pid": sentinel_pid,
                 "corriendo": sentinel_alive,
             },
-            "version": "3.0.0",
+            "version": "3.1.0",
         }
 
     # ── Procesamiento de mensajes ──────────────────────────────────────────────
@@ -134,10 +221,15 @@ class AgentSession:
             return
 
         if cmd in ("/auto", "/confirm"):
-            self.require_confirmation = not self.require_confirmation
-            modo = "SEGURO 🛡" if self.require_confirmation else "AUTÓNOMO ⚡"
-            yield {"type": "mode_change", "seguro": self.require_confirmation,
-                   "text": f"Modo cambiado a: {modo}"}
+            # Ciclar entre modos: smart → safe → auto → smart
+            ciclo = {MODO_SMART: MODO_SAFE, MODO_SAFE: MODO_AUTO, MODO_AUTO: MODO_SMART}
+            self.permission_mode = ciclo.get(self.permission_mode, MODO_SMART)
+            self.require_confirmation = self.permission_mode != MODO_AUTO
+            nombres = {MODO_SMART: "🧠 Inteligente", MODO_SAFE: "🛡 Seguro", MODO_AUTO: "⚡ Autónomo"}
+            yield {"type": "mode_change",
+                   "mode": self.permission_mode,
+                   "seguro": self.permission_mode == MODO_SAFE,
+                   "text": f"Modo cambiado a: {nombres[self.permission_mode]}"}
             yield {"type": "done"}
             return
 
@@ -329,14 +421,21 @@ class AgentSession:
             for tc in respuesta.tool_calls:
                 display = _describir_tool(tc.nombre, tc.argumentos)
 
-                # Solicitar confirmación si corresponde
-                req_conf = self.require_confirmation
-                if req_conf and tc.nombre in ("execute_local_bash", "write_file", "execute_ssh"):
+                # ── Lógica de confirmación por modo ────────────────────────────
+                # SMART: confirma solo comandos que no son de lectura/informativo
+                # SAFE:  confirma todo (execute_bash, write_file, execute_ssh)
+                # AUTO:  no confirma nada
+                necesita_confirm = False
+                if tc.nombre in ("execute_local_bash", "write_file", "execute_ssh"):
+                    if self.permission_mode == MODO_SAFE:
+                        necesita_confirm = True
+                    elif self.permission_mode == MODO_SMART:
+                        # En modo inteligente: verificar si el comando es seguro
+                        cmd_arg = tc.argumentos.get("command", tc.argumentos.get("contenido", ""))
+                        necesita_confirm = not _es_comando_seguro(str(cmd_arg))
+
+                if necesita_confirm:
                     confirm_id = str(uuid.uuid4())[:8]
-                    # BUGFIX: usar get_running_loop() en lugar de get_event_loop()
-                    # get_event_loop() en Python 3.10+ puede devolver un loop diferente
-                    # al que ejecuta este corutine bajo uvicorn, causando que el future
-                    # creado jamas pueda resolverse desde resolver_confirmacion()
                     try:
                         loop = asyncio.get_running_loop()
                     except RuntimeError:
@@ -350,6 +449,7 @@ class AgentSession:
                         "display": display,
                         "confirm_id": confirm_id,
                         "args": tc.argumentos,
+                        "mode": self.permission_mode,
                     }
 
                     try:
@@ -364,12 +464,10 @@ class AgentSession:
                         yield {"type": "tool_result", "tool": tc.nombre,
                                "result": resultado, "cancelled": True}
                         self.historial.agregar_resultado_tool(tc.call_id, tc.nombre, resultado)
-                        # BUGFIX: terminar el loop de iteraciones cuando el usuario cancela
-                        # para no permitir que el LLM intente el mismo comando infinitamente
                         yield {"type": "info", "text": "Ejecución cancelada. Podés pedir otra cosa."}
                         yield {"type": "done"}
                         return
-                    req_conf = False  # Ya confirmado
+
 
                 # Notificar tool call
                 yield {"type": "tool_call", "tool": tc.nombre,
@@ -457,6 +555,48 @@ class AgentSession:
             yield {"type": "error", "text": f"Error al cambiar motor: {e}"}
 
         yield {"type": "done"}
+
+    # ── Cambio de modelo LM Studio ─────────────────────────────────────────────
+
+    async def cambiar_modelo(self, model_id: str) -> dict:
+        """
+        Cambia el modelo de LM Studio en caliente sin reiniciar el agente.
+        Retorna dict con ok, text y status actualizado.
+        """
+        if self.motor != "local":
+            return {"ok": False, "text": f"El cambio de modelo solo aplica al motor LM Studio (activo: {self.motor})"}
+
+        try:
+            # Actualizar el model_id en el agente si soporta la propiedad
+            if hasattr(self.agente, "model_id"):
+                self.agente.model_id = model_id
+            if hasattr(self.agente, "_model_id"):
+                self.agente._model_id = model_id
+            # Actualizar en la sesión
+            self.model_id = model_id
+            # Actualizar el nombre del motor para que se muestre correctamente
+            if hasattr(self.agente, "_nombre"):
+                self.agente._nombre = f"LM Studio [{model_id}]"
+            return {
+                "ok": True,
+                "text": f"Modelo cambiado a: {model_id}",
+                "model_id": model_id,
+                "status": self.get_status()
+            }
+        except Exception as e:
+            return {"ok": False, "text": f"Error cambiando modelo: {e}"}
+
+    # ── Cambio de modo de permisos ─────────────────────────────────────────────
+
+    def set_permission_mode(self, mode: str) -> dict:
+        """Cambia el modo de permisos directamente (para llamadas desde API REST)."""
+        if mode not in (MODO_SMART, MODO_SAFE, MODO_AUTO):
+            return {"ok": False, "text": f"Modo inválido: {mode}. Opciones: smart, safe, auto"}
+        self.permission_mode = mode
+        self.require_confirmation = mode != MODO_AUTO
+        nombres = {MODO_SMART: "🧠 Inteligente", MODO_SAFE: "🛡 Seguro", MODO_AUTO: "⚡ Autónomo"}
+        return {"ok": True, "mode": mode, "text": f"Modo: {nombres[mode]}", "status": self.get_status()}
+
 
     # ── Confirmaciones ─────────────────────────────────────────────────────────
 

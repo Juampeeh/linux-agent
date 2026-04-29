@@ -37,13 +37,13 @@
 
 ---
 
-## Arquitectura del proyecto (v3.0)
+## Arquitectura del proyecto (v3.1)
 
 ```
 linux_agent/
 ├── main.py               ← Entry point. Banner + menú motor + bucle chat + sentinel control
 ├── config.py             ← Carga .env, expone 40+ constantes tipadas
-├── agent_core.py         ← AgentSession: clase async que gestiona la sesión para la Web UI
+├── agent_core.py         ← AgentSession v3.1: 3-mode permissions (smart/safe/auto), model switching, smart command classifier
 ├── tools.py              ← execute_local_bash(): subprocess + streaming + timeout + confirmación
 ├── tools_web.py          ← web_search(): DuckDuckGo via ddgs, sin API key
 ├── tools_files.py        ← read_file() + write_file() con preview/confirmación + advertencia LLM archivos grandes
@@ -52,7 +52,7 @@ linux_agent/
 ├── agentic_loop.py       ← AgenticTaskRunner: /task con reintentos + memoria + web
 ├── memory_consolidator.py← Consolida episodios en memoria al terminar /task
 ├── telegram_bot.py       ← Bot async Telegram: polling + InlineKeyboard + alertas
-├── web_server.py         ← FastAPI v3.0: REST + WebSocket chat + WebSocket eventos push
+├── web_server.py         ← FastAPI v3.1: REST + WS chat + WS eventos + endpoints modelo/modo
 ├── web_server_start.py   ← Launcher del servidor web (usado en producción con nohup)
 ├── setup.py              ← Instalador automático (venv + deps + .env)
 ├── install_system.py     ← Instala deps en Python del sistema (sin venv)
@@ -67,17 +67,17 @@ linux_agent/
 │   ├── memory.py         ← MemoriaSemantica v2.1: SQLite WAL + coseno + embeddings + TTL
 │   ├── router.py         ← crear_agente(), motores_disponibles(), fallback
 │   ├── tool_registry.py  ← HERRAMIENTAS[8 tools], SYSTEM_PROMPT dinámico, conversores
-│   ├── lmstudio_agent.py ← Adaptador LM Studio (OpenAI-compatible, JIT retry)
+│   ├── lmstudio_agent.py ← Adaptador LM Studio (OpenAI-compatible, JIT retry, model switch)
 │   ├── ollama_agent.py   ← Adaptador Ollama (OpenAI-compatible)
 │   ├── gemini_agent.py   ← Adaptador Google Gemini (SDK nativo)
 │   ├── openai_agent.py   ← Adaptador OpenAI ChatGPT (SDK nativo)
 │   ├── grok_agent.py     ← Adaptador Grok xAI (OpenAI-compatible)
 │   └── anthropic_agent.py← Adaptador Anthropic Claude (SDK nativo)
 │
-├── web/                  ← Activos de la Web UI v3.0 (servidos desde /static)
-│   ├── index.html        ← SPA minimalista: chat + panel sistema + sentinel + memoria
-│   ├── style.css         ← Diseño dark + glassmorphism + responsive
-│   └── app.js            ← WebSocket chat, confirmaciones inteligentes (texto o clic)
+├── web/                  ← Activos de la Web UI v3.1 (servidos desde /static)
+│   ├── index.html        ← SPA: chat + selector modelo LM Studio + sistema + sentinel + memoria
+│   ├── style.css         ← Diseño dark + glassmorphism + responsive + estilos modo inteligente
+│   └── app.js            ← WS chat, confirmaciones, selector modelo, sistema 3 modos
 │
 ├── deploy_to_vm.py       ← [Windows] Sube archivos a VM via SSH/SFTP + tests
 ├── github_push.py        ← [Windows] Crea repo en GitHub API + git push desde VM
