@@ -182,6 +182,22 @@ class AgentSession:
             yield {"type": "done"}
             return
 
+        # /model — en Web UI informa los modelos disponibles via LM Studio
+        if cmd in ("/model", "/models"):
+            try:
+                import httpx, json as _json
+                r = httpx.get(f"{cfg.LMSTUDIO_BASE_URL}/models", timeout=5)
+                modelos = [m["id"] for m in r.json().get("data", [])]
+                if modelos:
+                    lista = "\n".join(f"- `{m}`" for m in modelos)
+                    yield {"type": "info", "text": f"**Modelos cargados en LM Studio:**\n{lista}\n\nPara cambiar el modelo usa `/switch local` o el selector del panel."}
+                else:
+                    yield {"type": "info", "text": "No hay modelos cargados en LM Studio en este momento."}
+            except Exception as e:
+                yield {"type": "info", "text": f"No se pudo consultar LM Studio: {e}"}
+            yield {"type": "done"}
+            return
+
         if cmd == "/sentinel start":
             ok = _sentinel_start(self.memoria)
             yield {"type": "sentinel_update",
@@ -248,8 +264,10 @@ class AgentSession:
                 )
             except Exception as e:
                 err_str = str(e)
+                err_lower = err_str.lower()
+                # Error 400: contexto demasiado largo
                 if "400" in err_str and any(
-                    k in err_str.lower() for k in ("context", "exceeded", "length")
+                    k in err_lower for k in ("context", "exceeded", "length")
                 ):
                     self.historial.reducir(mantener_ultimos=6)
                     try:
@@ -260,10 +278,24 @@ class AgentSession:
                         yield {"type": "error", "text": str(e2)}
                         yield {"type": "done"}
                         return
+                # Error 400: modelo descargado en LM Studio
+                elif "400" in err_str and any(
+                    k in err_lower for k in ("unloaded", "no models loaded")
+                ):
+                    yield {
+                        "type": "error",
+                        "text": (
+                            "**El modelo de LM Studio está descargado o no disponible.**\n"
+                            "Cargá un modelo en LM Studio y volvé a intentarlo."
+                        )
+                    }
+                    yield {"type": "done"}
+                    return
                 else:
                     yield {"type": "error", "text": err_str}
                     yield {"type": "done"}
                     return
+
 
             # Sin tool calls: respuesta final
             if not respuesta.tiene_tool_calls:
@@ -301,7 +333,15 @@ class AgentSession:
                 req_conf = self.require_confirmation
                 if req_conf and tc.nombre in ("execute_local_bash", "write_file", "execute_ssh"):
                     confirm_id = str(uuid.uuid4())[:8]
-                    future: asyncio.Future = asyncio.get_event_loop().create_future()
+                    # BUGFIX: usar get_running_loop() en lugar de get_event_loop()
+                    # get_event_loop() en Python 3.10+ puede devolver un loop diferente
+                    # al que ejecuta este corutine bajo uvicorn, causando que el future
+                    # creado jamas pueda resolverse desde resolver_confirmacion()
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = asyncio.get_event_loop()
+                    future: asyncio.Future = loop.create_future()
                     self._pending_confirms[confirm_id] = future
 
                     yield {
@@ -324,7 +364,11 @@ class AgentSession:
                         yield {"type": "tool_result", "tool": tc.nombre,
                                "result": resultado, "cancelled": True}
                         self.historial.agregar_resultado_tool(tc.call_id, tc.nombre, resultado)
-                        continue
+                        # BUGFIX: terminar el loop de iteraciones cuando el usuario cancela
+                        # para no permitir que el LLM intente el mismo comando infinitamente
+                        yield {"type": "info", "text": "Ejecución cancelada. Podés pedir otra cosa."}
+                        yield {"type": "done"}
+                        return
                     req_conf = False  # Ya confirmado
 
                 # Notificar tool call

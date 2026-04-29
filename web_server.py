@@ -279,8 +279,20 @@ async def ws_chat(websocket: WebSocket):
             if msg_type == "confirm_result":
                 confirm_id = msg.get("confirm_id", "")
                 aprobado = bool(msg.get("approved", False))
-                _session.resolver_confirmacion(confirm_id, aprobado)
+                # Resolver el future en el loop de asyncio actual (mismo loop del WS)
+                # para evitar race conditions entre el corutine del agente y este handler
+                future = _session._pending_confirms.get(confirm_id)
+                if future and not future.done():
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.call_soon_threadsafe(
+                            lambda f=future, v=aprobado: f.set_result(v) if not f.done() else None
+                        )
+                    except Exception:
+                        # Fallback al método original
+                        _session.resolver_confirmacion(confirm_id, aprobado)
                 continue
+
 
             # Mensaje de chat normal
             if msg_type == "message":
