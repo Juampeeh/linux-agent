@@ -1422,3 +1422,101 @@ Si querés acceder a la UI desde fuera de tu LAN:
 ---
 
 *Manual Linux Local AI Agent v3.1.0 — https://github.com/Juampeeh/linux-agent*
+
+---
+
+## 21. Accesos Directos y Autostart (v3.1)
+
+Desde v3.1, el agente incluye scripts de administración y un servicio systemd para
+arrancar automáticamente al iniciar la VM.
+
+### Estructura de scripts
+
+```
+scripts/
+├── start_services.sh    ← Inicia Web UI + Centinela (NO el CLI)
+├── start_agent_cli.sh   ← Inicia el agente en modo terminal interactivo
+├── setup_autostart.sh   ← Instala todo en la VM (shortcuts + systemd)
+└── linux-agent.service  ← Unidad systemd para autostart al boot
+```
+
+---
+
+### 🖥️ Accesos directos en el Desktop de la VM
+
+Después de ejecutar el deploy o `setup_autostart.sh`, aparecen dos íconos en el Desktop:
+
+| Ícono | Nombre | Qué hace |
+|-------|--------|----------|
+| 🖥️ | **Iniciar Agente** | Inicia Web UI (puerto 7860) + Centinela en background. Para cuando el autostart falló o cerraste los servicios manualmente. |
+| 🤖 | **Agente CLI** | Abre una terminal con `python main.py` — el agente interactivo de siempre. |
+
+> **Nota Ubuntu:** Si los íconos aparecen sin ejecutar, hacé click derecho → "Allow Launching".
+
+---
+
+### 🔄 Autostart al boot (systemd)
+
+Al iniciar la VM, el servicio `linux-agent` levanta automáticamente:
+- **Web UI** en `http://<IP>:7860`
+- **Centinela** de monitoreo (15 segundos después del web server)
+
+El agente CLI **no** se inicia automáticamente — es interactivo y requiere que el usuario lo abra.
+
+#### Comandos de control del servicio
+
+```bash
+# Ver estado
+sudo systemctl status linux-agent
+
+# Ver logs en vivo
+journalctl -u linux-agent -f
+
+# Detener
+sudo systemctl stop linux-agent
+
+# Reiniciar
+sudo systemctl restart linux-agent
+
+# Deshabilitar autostart (no arranca más al boot)
+sudo systemctl disable linux-agent
+
+# Rehabilitar autostart
+sudo systemctl enable linux-agent
+```
+
+---
+
+### 📋 Uso del script start_services.sh
+
+Si por algún motivo los servicios no están corriendo (reiniciaste, cerraste la terminal, etc.):
+
+```bash
+# Opción 1 — Desde el Desktop (doble click en "Iniciar Agente")
+
+# Opción 2 — Desde terminal
+bash ~/linux_agent/scripts/start_services.sh
+```
+
+El script:
+1. Mata instancias previas del servidor
+2. Inicia el Web Server en background
+3. Espera hasta 20s a que responda
+4. Inicia el Centinela vía API REST
+5. Muestra la URL de acceso
+
+---
+
+### ⚙️ Instalación manual en una VM nueva
+
+Si instalás el agente en una VM nueva y querés configurar los shortcuts y el autostart:
+
+```bash
+# 1. Asegurate de tener el agente instalado
+cd ~/linux_agent && python3 setup.py
+
+# 2. Ejecutar el setup (requiere sudo para systemd)
+bash ~/linux_agent/scripts/setup_autostart.sh
+```
+
+---

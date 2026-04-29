@@ -1,0 +1,36 @@
+[Unit]
+Description=Linux AI Agent — Web UI + Centinela
+Documentation=https://github.com/Juampeeh/linux-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=test
+Group=test
+WorkingDirectory=/home/test/linux_agent
+
+# Esperar 8s después del boot para que la red esté estable
+ExecStartPre=/bin/sleep 8
+
+# Iniciar el web server
+ExecStart=/home/test/linux_agent/venv/bin/python /home/test/linux_agent/web_server_start.py
+
+# Iniciar el centinela 15s después de que el web server esté listo
+ExecStartPost=/bin/bash -c 'sleep 15 && curl -s -X POST http://localhost:7860/api/sentinel -H "Content-Type: application/json" -d "{\"accion\": \"start\"}" >> /home/test/linux_agent/server.log 2>&1 || true'
+
+# Reintentar si falla (ej: LM Studio no disponible al boot)
+Restart=on-failure
+RestartSec=20
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+# Logs al archivo del agente
+StandardOutput=append:/home/test/linux_agent/server.log
+StandardError=append:/home/test/linux_agent/server.log
+
+# Entorno
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

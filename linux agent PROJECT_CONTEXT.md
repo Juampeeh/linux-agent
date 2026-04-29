@@ -79,6 +79,12 @@ linux_agent/
 │   ├── style.css         ← Diseño dark + glassmorphism + responsive + estilos modo inteligente
 │   └── app.js            ← WS chat, confirmaciones, selector modelo, sistema 3 modos
 │
+├── scripts/              ← Scripts de administración y automatización (v3.1)
+│   ├── start_services.sh ← Inicia Web UI + Centinela (sin CLI). Usado por shortcut desktop.
+│   ├── start_agent_cli.sh← Inicia el agente CLI (python main.py). Usado por shortcut desktop.
+│   ├── setup_autostart.sh← Instala servicio systemd + shortcuts desktop en la VM
+│   └── linux-agent.service← Unidad systemd para autostart al boot (Web + Sentinel)
+│
 ├── deploy_to_vm.py       ← [Windows] Sube archivos a VM via SSH/SFTP + tests
 ├── github_push.py        ← [Windows] Crea repo en GitHub API + git push desde VM
 ├── run_tests_on_vm.py    ← [Windows] Ejecuta test_agent.py en VM via SSH
