@@ -37,67 +37,69 @@
 
 ---
 
-## Arquitectura del proyecto (v3.1)
+## Arquitectura del proyecto (v3.4)
 
 ```
 linux_agent/
 ├── main.py               ← Entry point. Banner + menú motor + bucle chat + sentinel control
 ├── config.py             ← Carga .env, expone 40+ constantes tipadas
-├── agent_core.py         ← AgentSession v3.1: 3-mode permissions (smart/safe/auto), model switching, smart command classifier
-├── tools.py              ← execute_local_bash(): subprocess + streaming + timeout + confirmación
+├── agent_core.py         ← AgentSession v3.4: permisos 3-modo (smart/safe/auto), sync model_id, Agency routing
+├── agency_router.py      ← 🔢 NUEVO Router de personalidades Agency-Agents (auto-detección + /agente <clave>)
+├── tools.py              ← execute_local_bash(): subprocess + streaming + timeout + modos bool|str
 ├── tools_web.py          ← web_search(): DuckDuckGo via ddgs, sin API key
-├── tools_files.py        ← read_file() + write_file() con preview/confirmación + advertencia LLM archivos grandes
-├── tools_remote.py       ← execute_ssh() via paramiko, wake_on_lan()
-├── sentinel.py           ← Daemon independiente: analiza sistema + LLM + bus SQLite + WAL + JIT fallback inteligente
-├── agentic_loop.py       ← AgenticTaskRunner: /task con reintentos + memoria + web
+├── tools_files.py        ← read_file() + write_file() con preview/confirmación
+├── tools_remote.py       ← execute_ssh() via paramiko, wake_on_lan(), modos bool|str
+├── sentinel.py           ← Daemon independiente: analiza sistema + LLM + bus SQLite + WAL + JIT fallback
+├── agentic_loop.py       ← AgenticTaskRunner: /task con reintentos + memoria + web (firma bool|str)
 ├── memory_consolidator.py← Consolida episodios en memoria al terminar /task
 ├── telegram_bot.py       ← Bot async Telegram: polling + InlineKeyboard + alertas
-├── web_server.py         ← FastAPI v3.1: REST + WS chat + WS eventos + endpoints modelo/modo
+├── web_server.py         ← FastAPI v3.4: REST + WS chat + WS eventos + timeout 8s LM Studio
 ├── web_server_start.py   ← Launcher del servidor web (usado en producción con nohup)
 ├── setup.py              ← Instalador automático (venv + deps + .env)
 ├── install_system.py     ← Instala deps en Python del sistema (sin venv)
 ├── test_agent.py         ← Suite de 19 tests: imports, bash, E2E LLM, memoria
-├── vm_diagnostics.py     ← [Windows] Diagnóstico completo de la VM via SSH
-├── vm_fix.py             ← [Windows] Repara procesos colgados, WAL, reinicia servicios
+│
+├── agency_prompts/       ← 🔢 NUEVO Prompts especializados (Agency-Agents adaptados)
+│   ├── engineering-sre.md
+│   ├── engineering-devops-automator.md
+│   ├── engineering-security-engineer.md
+│   ├── engineering-incident-response-commander.md
+│   └── support-infrastructure-maintainer.md
 │
 ├── llm/
-│   ├── __init__.py
 │   ├── base.py           ← ABC: AgenteIA, RespuestaAgente, ToolCallCanonico
 │   ├── history.py        ← HistorialCanonico + reducir() con anclaje de último prompt
 │   ├── memory.py         ← MemoriaSemantica v2.1: SQLite WAL + coseno + embeddings + TTL
 │   ├── router.py         ← crear_agente(), motores_disponibles(), fallback
 │   ├── tool_registry.py  ← HERRAMIENTAS[8 tools], SYSTEM_PROMPT dinámico, conversores
-│   ├── lmstudio_agent.py ← Adaptador LM Studio (OpenAI-compatible, JIT retry, model switch)
+│   ├── lmstudio_agent.py ← Adaptador LM Studio (OpenAI-compatible, JIT retry, model sync)
 │   ├── ollama_agent.py   ← Adaptador Ollama (OpenAI-compatible)
 │   ├── gemini_agent.py   ← Adaptador Google Gemini (SDK nativo)
 │   ├── openai_agent.py   ← Adaptador OpenAI ChatGPT (SDK nativo)
 │   ├── grok_agent.py     ← Adaptador Grok xAI (OpenAI-compatible)
 │   └── anthropic_agent.py← Adaptador Anthropic Claude (SDK nativo)
 │
-├── web/                  ← Activos de la Web UI v3.1 (servidos desde /static)
-│   ├── index.html        ← SPA: chat + selector modelo LM Studio + sistema + sentinel + memoria
-│   ├── style.css         ← Diseño dark + glassmorphism + responsive + estilos modo inteligente
-│   └── app.js            ← WS chat, confirmaciones, selector modelo, sistema 3 modos
+├── web/                  ← Activos de la Web UI v3.4 (servidos desde /static)
+│   ├── index.html        ← SPA: chat + selector modelo unificado + botón Cancelar + quick-cmds
+│   ├── style.css         ← Dark + glassmorphism + cancel-btn + model-live-dot + responsive
+│   └── app.js            ← WS chat, cancel via WS close, selector modelo completo (live+saved)
 │
-├── scripts/              ← Scripts de administración y automatización (v3.1)
-│   ├── start_services.sh ← Inicia Web UI + Centinela (sin CLI). Usado por shortcut desktop.
-│   ├── start_agent_cli.sh← Inicia el agente CLI (python main.py). Usado por shortcut desktop.
+├── scripts/
+│   ├── start_services.sh ← Inicia Web UI + Centinela (sin CLI)
+│   ├── start_agent_cli.sh← Inicia el agente CLI (python main.py)
 │   ├── setup_autostart.sh← Instala servicio systemd + shortcuts desktop en la VM
 │   └── linux-agent.service← Unidad systemd para autostart al boot (Web + Sentinel)
 │
 ├── deploy_to_vm.py       ← [Windows] Sube archivos a VM via SSH/SFTP + tests
 ├── github_push.py        ← [Windows] Crea repo en GitHub API + git push desde VM
-├── run_tests_on_vm.py    ← [Windows] Ejecuta test_agent.py en VM via SSH
-├── restart_vm_services.py← [Windows] Mata procesos colgados y reinicia web_server
+├── vm_cmd.py             ← [Windows] Ejecuta comandos SSH en VM con output UTF-8
 ├── sync.py               ← [Windows] deploy + tests + GitHub en un comando
 │
 ├── .env                  ← ⚠ GITIGNORED. Credenciales reales.
 ├── .env.example          ← Plantilla comentada del .env
 ├── requirements.txt      ← Deps del agente
-├── requirements-dev.txt  ← Deps de dev: paramiko (solo Windows)
 ├── lm_models.json        ← Lista persistente de modelos LM Studio del usuario
 ├── memory.db             ← ⚠ GITIGNORED. SQLite WAL con memoria semántica vectorial
-├── .sentinel.pid         ← ⚠ GITIGNORED. PID del proceso centinela activo
 └── sentinel.log          ← Log del centinela (append-only)
 ```
 
