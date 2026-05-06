@@ -26,6 +26,7 @@ const els = {
   chatMessages:    $('chat-messages'),
   chatInput:       $('chat-input'),
   btnSend:         $('btn-send'),
+  btnCancel:       $('btn-cancel'),
   btnTask:         $('btn-task'),
   btnMode:         $('btn-mode'),
   modeLabel:       $('mode-label'),
@@ -520,13 +521,28 @@ function updateMemoryPanel(stats) {
 // =============================================================================
 
 let _currentModelId = null;
-let _pendingModelId = null;  // Modelo elegido por el usuario pero aún no confirmado por LM Studio
+let _pendingModelId = null;  // Modelo elegido por el usuario, pendiente de confirmación
+let _allModels = [];         // Lista unificada (LM Studio live + guardados)
 
 async function fetchLMStudioModels() {
   try {
-    const r = await fetch('/api/lmstudio/models');
-    const d = await r.json();
-    renderModelList(d);
+    // Consultar en paralelo: modelos live de LM Studio + lista guardada
+    const [liveResp, savedResp] = await Promise.all([
+      fetch('/api/lmstudio/models').then(r => r.json()).catch(() => ({ ok: false, chat_models: [] })),
+      fetch('/api/models').then(r => r.json()).catch(() => ({ models: [] })),
+    ]);
+
+    const liveModels  = liveResp.chat_models || [];
+    const savedModels = savedResp.models || [];
+
+    // Unificar: live primero, luego guardados que no estén ya en la lista live
+    const liveSet  = new Set(liveModels);
+    const combined = [...liveModels, ...savedModels.filter(m => !liveSet.has(m))];
+    _allModels = combined;
+
+    // Si el backend reporta un modelo activo, sincronizar
+    const reportedCurrent = liveResp.current;
+    renderModelList({ current: reportedCurrent, chat_models: combined, live_models: liveModels });
   } catch {
     if (els.modelList) els.modelList.innerHTML = '<div style="font-size:11px;color:var(--text-muted)">LM Studio no disponible</div>';
   }
@@ -535,57 +551,79 @@ async function fetchLMStudioModels() {
 function renderModelList(data) {
   if (!els.modelList) return;
 
-  // Si hay un modelo pendiente (el usuario lo seleccionó pero LM Studio aún no lo reportó),
-  // usamos ese en lugar del reportado por LM Studio para que el highlight sea correcto.
   const reported = data.current;
+  // Si el pending ya fue confirmado por LM Studio, limpiarlo
   if (_pendingModelId && reported && reported === _pendingModelId) {
-    // LM Studio ya reportó el nuevo modelo como activo → limpiar pending
     _pendingModelId = null;
   }
-  const effectiveCurrent = _pendingModelId || reported;
+  // Modelo efectivo: pending > reported > null
+  const effectiveCurrent = _pendingModelId || reported || _currentModelId;
   _currentModelId = effectiveCurrent;
 
-  // Actualizar label del modelo actual
+  // Label del modelo activo
   if (els.modelCurrent) {
-    els.modelCurrent.textContent = _pendingModelId
-      ? `⏳ ${_pendingModelId.split('/').pop()} (cargando...)`
-      : (reported || 'Autodetectar');
+    if (_pendingModelId) {
+      els.modelCurrent.textContent = `⏳ ${_pendingModelId.split('/').pop()} (cargando...)`;
+    } else if (effectiveCurrent) {
+      const short = effectiveCurrent.split('/').pop();
+      els.modelCurrent.textContent = `✓ ${short}`;
+    } else {
+      els.modelCurrent.textContent = 'Autodetectar';
+    }
   }
 
-  const models = data.chat_models || [];
+  const models  = data.chat_models || [];
+  const liveSet = new Set(data.live_models || models);
   els.modelList.innerHTML = '';
 
   if (!models.length) {
-    els.modelList.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:4px">Sin modelos de chat disponibles</div>';
+    els.modelList.innerHTML = '<div style="font-size:11px;color:var(--text-muted);padding:4px">Sin modelos disponibles</div>';
     return;
   }
 
   for (const modelId of models) {
     const isPending = modelId === _pendingModelId;
     const isCurrent = modelId === effectiveCurrent;
+    const isLive    = liveSet.has(modelId);
     const item = document.createElement('div');
     item.className = `model-item${isCurrent ? ' active' : ''}${isPending ? ' loading' : ''}`;
-    item.title = modelId;
-    const loadingBadge = isPending ? '<span class="model-loading-badge" title="Cargando en VRAM…">⏳</span>' : '';
-    item.innerHTML = `<span class="model-dot"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis">${modelId}</span>${loadingBadge}<button class="model-del-btn" title="Eliminar de lista guardada" data-model="${modelId}">×</button>`;
-    item.querySelector('span.model-dot, span[style]').addEventListener('click', () => switchModel(modelId));
+    item.title = `${modelId}${isLive ? ' (en LM Studio)' : ' (guardado)'}`;
+    item.style.cursor = 'pointer';
+
+    const badge    = isPending  ? '<span class="model-loading-badge" title="Cargando en VRAM…">⏳</span>' : '';
+    const liveDot  = isLive     ? '<span class="model-live-dot" title="Disponible en LM Studio"></span>' : '<span class="model-saved-dot" title="Guardado localmente"></span>';
+
+    item.innerHTML = `
+      <div class="model-item-inner">
+        ${liveDot}
+        <span class="model-name">${modelId}</span>
+        ${badge}
+        <button class="model-del-btn" title="Eliminar de lista guardada" data-model="${modelId}">x</button>
+      </div>`;
+
+    // Click en todo el item (excepto el botón eliminar) cambia el modelo
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('.model-del-btn')) return;
+      switchModel(modelId);
+    });
     item.querySelector('.model-del-btn').addEventListener('click', async (e) => {
       e.stopPropagation();
       await deleteSavedModel(modelId);
     });
+
     els.modelList.appendChild(item);
   }
 }
 
 async function switchModel(modelId) {
   if (modelId === _pendingModelId) {
-    showToast(`Ya está cargando ${modelId.split('/').pop()}...`, 'info', 2000);
+    showToast(`Ya está cargando ${modelId.split('/').pop()}…`, 'info', 2000);
     return;
   }
-  _pendingModelId = modelId;  // Marcar como seleccionado localmente de inmediato
-  // Re-renderizar con el pending marcado visualmente
-  fetchLMStudioModels();
-  showToast(`⏳ Cambiando a ${modelId.split('/').pop()}... (puede tardar si se carga desde disco)`, 'info', 5000);
+  _pendingModelId = modelId;
+  // Re-renderizar inmediatamente con el pending
+  renderModelList({ current: _currentModelId, chat_models: _allModels, live_models: _allModels });
+  showToast(`⏳ Cambiando a ${modelId.split('/').pop()}… (puede tardar si carga desde disco)`, 'info', 5000);
   try {
     const r = await fetch('/api/lmstudio/model', {
       method: 'POST',
@@ -595,11 +633,11 @@ async function switchModel(modelId) {
     const d = await r.json();
     if (d.ok) {
       _currentModelId = modelId;
-      _pendingModelId = null;  // Confirmado por el servidor
+      _pendingModelId = null;
       showToast(`✅ ${d.text}`, 'success');
-      fetchLMStudioModels();  // Refrescar para limpiar el estado de carga
+      fetchLMStudioModels();
     } else {
-      _pendingModelId = null;  // Error → limpiar pending
+      _pendingModelId = null;
       showToast(`❌ ${d.text}`, 'alert');
       fetchLMStudioModels();
     }
@@ -823,6 +861,30 @@ function setConnectionState(state) {
 
 function updateSendBtn() {
   els.btnSend.disabled = !isConnected || isBusy;
+  // Mostrar/ocultar botón cancelar
+  if (els.btnCancel) {
+    if (isBusy) {
+      els.btnCancel.classList.remove('hidden');
+    } else {
+      els.btnCancel.classList.add('hidden');
+    }
+  }
+}
+
+function cancelCurrentRequest() {
+  if (!isBusy) return;
+  // Interrumpir reconectando el WebSocket — corta el streaming actual
+  showToast('Cancelando respuesta…', 'info', 2000);
+  addSystemMessage('❌ Respuesta cancelada por el usuario.', 'info');
+  hideTypingIndicator();
+  finishAgentMessage();
+  isBusy = false;
+  updateSendBtn();
+  // Cerrar WS actual (se reconectará automáticamente vía onclose)
+  if (chatWs) {
+    chatWs.close();
+    chatWs = null;
+  }
 }
 
 function autoResize(ta) {
@@ -891,6 +953,7 @@ function markdownToHtml(text) {
 // =============================================================================
 
 els.btnSend.addEventListener('click', handleSend);
+if (els.btnCancel) els.btnCancel.addEventListener('click', cancelCurrentRequest);
 
 els.chatInput.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -986,17 +1049,23 @@ document.querySelectorAll('.quick-cmd').forEach(btn => {
   connectEvents();
   await fetchSystemMetrics();
   setInterval(fetchSystemMetrics, SYSTEM_POLL_MS);
-  // Cargar modelos LM Studio al iniciar
+  // Cargar modelos LM Studio al iniciar (incluye lista guardada y live)
   await fetchLMStudioModels();
   // Refrescar modelos cada 60s
   setInterval(fetchLMStudioModels, 60000);
 
-  // Actualizar status del sentinel al cargar
+  // Obtener status del agente: modo, motor, modelo activo
   try {
     const r = await fetch('/api/status');
     const s = await r.json();
     applyStatus(s);
     if (s.sentinel) updateSentinelPanel(s.sentinel);
+    // Sincronizar el modelo activo desde el backend
+    if (s.model_id && !_currentModelId) {
+      _currentModelId = s.model_id;
+      // Re-renderizar con el modelo correcto marcado
+      fetchLMStudioModels();
+    }
   } catch {}
 })();
 

@@ -175,6 +175,17 @@ class AgentSession:
                 raise RuntimeError(f"No se pudo inicializar ningún motor: {e}") from e
             self.motor = "local"
 
+        # Sincronizar model_id real: el adaptador puede haberlo autodetectado
+        # (por ej. LMStudioAgente._autodetectar_modelo). Esto garantiza que
+        # /api/status y /api/lmstudio/models retornen 'current' correcto.
+        if self.model_id is None and self.agente:
+            real_id = (
+                getattr(self.agente, "_model_id", None) or
+                getattr(self.agente, "model_id",  None)
+            )
+            if real_id:
+                self.model_id = real_id
+
         self.historial = HistorialCanonico(system_prompt=get_system_prompt())
         self.memoria = crear_memoria(self.motor)
 
@@ -452,7 +463,13 @@ class AgentSession:
                     yield {"type": "error", "text": err_str}
                     yield {"type": "done"}
                     return
-
+            # Sincronizar model_id desde el adaptador (puede haber cambiado por fallback)
+            real_id = (
+                getattr(self.agente, "_model_id", None) or
+                getattr(self.agente, "model_id",  None)
+            )
+            if real_id and real_id != self.model_id:
+                self.model_id = real_id
 
             # Sin tool calls: respuesta final
             if not respuesta.tiene_tool_calls:

@@ -507,6 +507,7 @@ html, body {
   margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.4px;
 }
 
+
 /* ── Responsive ──────────────────────────────────────────────── */
 @media (max-width: 768px) {
   #side-panel { display: none; }
@@ -515,31 +516,82 @@ html, body {
 
 .hidden { display: none !important; }
 
+/* ── Botón Cancelar ──────────────────────────────────────────── */
+.cancel-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 12px; border-radius: var(--radius);
+  border: 1px solid rgba(248,81,73,0.5);
+  background: rgba(248,81,73,0.1); color: var(--accent-red);
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: all var(--transition);
+  animation: cancelPulse 1.8s ease-in-out infinite;
+}
+.cancel-btn:hover {
+  background: rgba(248,81,73,0.2);
+  border-color: rgba(248,81,73,0.8);
+}
+@keyframes cancelPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(248,81,73,0.3); }
+  50%       { box-shadow: 0 0 0 5px rgba(248,81,73,0); }
+}
+
+/* ── Modelo: item inner layout ───────────────────────────────── */
+.model-item {
+  padding: 6px 8px; border-radius: var(--radius);
+  transition: background var(--transition), border-color var(--transition);
+  user-select: none;
+}
+.model-item:hover { background: var(--bg-hover); }
+.model-item.active { background: rgba(88,166,255,0.1); }
+.model-item.active .model-name { color: var(--accent-blue); font-weight: 600; }
+
+.model-item-inner {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%;
+}
+.model-name {
+  flex: 1; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Dot: modelo disponible en LM Studio (verde vivo) */
+.model-live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent-green); flex-shrink: 0;
+  box-shadow: 0 0 4px rgba(63,185,80,0.6);
+}
+/* Dot: modelo guardado localmente (gris) */
+.model-saved-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--text-muted); flex-shrink: 0;
+  opacity: 0.5;
+}
+
 /* ── Botón de eliminar modelo ──────────────────────────────── */
 .model-del-btn {
   background: none; border: none; color: var(--text-muted);
-  cursor: pointer; font-size: 14px; line-height: 1; padding: 2px 4px;
+  cursor: pointer; font-size: 14px; line-height: 1; padding: 2px 5px;
   border-radius: 4px; opacity: 0; transition: opacity 0.15s, color 0.15s;
   flex-shrink: 0;
 }
 .model-item:hover .model-del-btn { opacity: 1; }
 .model-del-btn:hover { color: var(--accent-red); }
 
-/* ── Estado de carga de modelo ──────────────────────────────────────────────── */
+/* ── Estado de carga de modelo ──────────────────────────────── */
 .model-item.loading {
-  opacity: 0.75;
+  opacity: 0.8;
   background: rgba(88,166,255,0.05);
   border-left: 2px solid var(--accent-blue);
   animation: modelLoading 1.5s ease-in-out infinite;
 }
 .model-loading-badge {
-  font-size: 12px;
-  flex-shrink: 0;
+  font-size: 12px; flex-shrink: 0;
   animation: spin 1.5s linear infinite;
   display: inline-block;
 }
 @keyframes modelLoading {
-  0%, 100% { opacity: 0.75; }
+  0%, 100% { opacity: 0.8; }
   50%       { opacity: 1; }
 }
 @keyframes spin {
@@ -547,4 +599,9 @@ html, body {
   to   { transform: rotate(360deg); }
 }
 
-
+/* ── Label modelo actual ─────────────────────────────────────── */
+.model-current-label {
+  font-size: 12px; color: var(--text-secondary);
+  margin-bottom: 8px; font-weight: 500;
+  padding: 4px 0;
+}
