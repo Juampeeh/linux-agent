@@ -482,12 +482,12 @@ def _procesar_turno(
             tg_chat = telegram_chat_id
             req_conf = require_confirmation
 
-            if req_conf and tg_chat and _telegram_bot and _telegram_bot.is_running():
+            if require_confirmation != 'auto' and tg_chat and _telegram_bot and _telegram_bot.is_running():
                 # Pedir aprobación por Telegram
                 if tc.nombre == "execute_local_bash":
                     cmd_preview = tc.argumentos.get("comando", "")[:200]
                     aprobado = _telegram_bot.pedir_aprobacion(cmd_preview, tg_chat)
-                    req_conf = not aprobado  # Si aprobó → sin confirmación extra en CLI
+                    req_conf = 'auto' if aprobado else req_conf  # Si aprobó → sin confirmación extra en CLI
 
             resultado = ejecutar_tool(
                 tc_nombre=tc.nombre,
@@ -532,7 +532,9 @@ def bucle_agente(motor_inicial: str, model_id_inicial: str | None) -> None:
             console.print("[bold red]  ✗ No se pudo inicializar ningún motor.[/bold red]")
             return
 
-    require_confirmation: bool = cfg.REQUIRE_CONFIRMATION
+    # Modo de permisos: 'smart' (default) | 'safe' | 'auto'
+    _default_mode = getattr(cfg, 'PERMISSION_MODE', 'smart')
+    require_confirmation: str = 'safe' if cfg.REQUIRE_CONFIRMATION else _default_mode
     motor_actual: str = motor_inicial
     # Generar system prompt con fecha actual al arrancar la sesión
     historial = HistorialCanonico(system_prompt=get_system_prompt())
@@ -623,19 +625,42 @@ def bucle_agente(motor_inicial: str, model_id_inicial: str | None) -> None:
             continue
 
         if cmd in ("/auto", "/confirm"):
-            require_confirmation = not require_confirmation
-            if not require_confirmation:
-                console.print(Panel(
-                    "⚠️  [bold yellow]MODO AUTÓNOMO ACTIVADO[/bold yellow]\n"
-                    "[dim]El agente ejecutará comandos sin preguntar.[/dim]",
-                    border_style="yellow",
-                ))
-            else:
-                console.print(Panel(
-                    "🛡️  [bold green]MODO SEGURO ACTIVADO[/bold green]\n"
-                    "[dim]Se requerirá confirmación (Y/n) para cada comando.[/dim]",
-                    border_style="green",
-                ))
+            # Ciclar entre modos: smart → safe → auto → smart  (igual que Web UI)
+            ciclo = {"smart": "safe", "safe": "auto", "auto": "smart"}
+            require_confirmation = ciclo.get(require_confirmation, "smart") \
+                if isinstance(require_confirmation, str) else \
+                ciclo.get("safe" if require_confirmation else "auto", "smart")
+            # Normalizar: require_confirmation puede ser bool (legado) → convertir
+            if not isinstance(require_confirmation, str):
+                require_confirmation = "smart"
+            nombre_modo = {"smart": "🧠 Inteligente", "safe": "🛡 Seguro", "auto": "⚡ Autónomo"}
+            colores      = {"smart": "cyan",           "safe": "green",    "auto": "yellow"}
+            iconos_panel = {
+                "smart": "🧠 [bold cyan]MODO INTELIGENTE ACTIVADO[/bold cyan]\n[dim]Auto-ejecuta lecturas; confirma escrituras y cambios.[/dim]",
+                "safe":  "🛡️  [bold green]MODO SEGURO ACTIVADO[/bold green]\n[dim]Se requerirá confirmación (Y/n) para cada comando.[/dim]",
+                "auto":  "⚡ [bold yellow]MODO AUTÓNOMO ACTIVADO[/bold yellow]\n[dim]El agente ejecutará comandos sin preguntar.[/dim]",
+            }
+            console.print(Panel(iconos_panel[require_confirmation],
+                                border_style=colores[require_confirmation]))
+            continue
+
+        if cmd == "/mode":
+            # Selector interactivo de modo (igual experiencia que la Web UI)
+            console.print()
+            console.print(Rule("[bold cyan]🛡️  Seleccionar Modo de Permisos[/]", style="cyan"))
+            console.print("  [cyan]1.[/] 🧠 [bold]Inteligente[/] — Auto-ejecuta lecturas, confirma escrituras")
+            console.print("  [cyan]2.[/] 🛡  [bold]Seguro[/]       — Confirma todos los comandos")
+            console.print("  [cyan]3.[/] ⚡ [bold]Autónomo[/]    — Ejecuta TODO sin preguntar")
+            console.print()
+            try:
+                opcion = Prompt.ask("  Modo", choices=["1", "2", "3"], console=console).strip()
+            except (KeyboardInterrupt, EOFError):
+                continue
+            mapa = {"1": "smart", "2": "safe", "3": "auto"}
+            require_confirmation = mapa.get(opcion, "smart")
+            colores = {"smart": "cyan", "safe": "green", "auto": "yellow"}
+            nombre_modo = {"smart": "🧠 Inteligente", "safe": "🛡 Seguro", "auto": "⚡ Autónomo"}
+            console.print(f"  [bold {colores[require_confirmation]}]✓ Modo cambiado a: {nombre_modo[require_confirmation]}[/]")
             continue
 
         if cmd in ("/engines", "/motores", "/motor"):

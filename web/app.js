@@ -552,8 +552,12 @@ function renderModelList(data) {
     const item = document.createElement('div');
     item.className = `model-item${modelId === _currentModelId ? ' active' : ''}`;
     item.title = modelId;
-    item.innerHTML = `<span class="model-dot"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis">${modelId}</span>`;
-    item.addEventListener('click', () => switchModel(modelId));
+    item.innerHTML = `<span class="model-dot"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis">${modelId}</span><button class="model-del-btn" title="Eliminar de lista guardada" data-model="${modelId}">×</button>`;
+    item.querySelector('span.model-dot, span[style]').addEventListener('click', () => switchModel(modelId));
+    item.querySelector('.model-del-btn').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await deleteSavedModel(modelId);
+    });
     els.modelList.appendChild(item);
   }
 }
@@ -579,6 +583,46 @@ async function switchModel(modelId) {
     showToast('Error al cambiar modelo', 'alert');
   }
 }
+
+async function addSavedModel() {
+  const input = document.getElementById('model-add-input');
+  const modelId = input ? input.value.trim() : '';
+  if (!modelId) { showToast('Ingresá un identificador de modelo', 'info', 2000); return; }
+  try {
+    const r = await fetch('/api/models/add', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ model_id: modelId }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      showToast(`✅ ${d.text}`, 'success');
+      if (input) input.value = '';
+      fetchLMStudioModels();
+    } else {
+      showToast(`❌ ${d.text}`, 'alert');
+    }
+  } catch {
+    showToast('Error al agregar modelo', 'alert');
+  }
+}
+
+async function deleteSavedModel(modelId) {
+  try {
+    const r = await fetch(`/api/models/${encodeURIComponent(modelId)}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (d.ok) {
+      showToast(`🗑 ${d.text}`, 'info');
+      fetchLMStudioModels();
+    } else {
+      showToast(`❌ ${d.text}`, 'alert');
+    }
+  } catch {
+    showToast('Error al eliminar modelo', 'alert');
+  }
+}
+
+
 
 // =============================================================================
 // Métricas del sistema
@@ -872,6 +916,14 @@ els.motorSelect.addEventListener('change', e => {
 
 els.btnRefreshSystem.addEventListener('click', fetchSystemMetrics);
 els.btnRefreshModels.addEventListener('click', fetchLMStudioModels);
+
+// Agregar modelo guardado
+const _btnModelAdd = document.getElementById('btn-model-add');
+const _modelAddInput = document.getElementById('model-add-input');
+if (_btnModelAdd) _btnModelAdd.addEventListener('click', addSavedModel);
+if (_modelAddInput) _modelAddInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') addSavedModel();
+});
 
 els.btnSentinelStart.addEventListener('click', () => sendMessage('/sentinel start'));
 els.btnSentinelStop.addEventListener('click',  () => sendMessage('/sentinel stop'));

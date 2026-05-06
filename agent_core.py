@@ -20,6 +20,16 @@ from llm.tool_registry import HERRAMIENTAS, get_system_prompt
 from llm.memory import crear_memoria
 from agentic_loop import ejecutar_tool, AgenticTaskRunner
 
+# Agency-Agents: router de personalidades especializadas
+try:
+    from agency_router import obtener_personalidad, listar_agentes, AGENTES_DISPONIBLES
+    _AGENCY_DISPONIBLE = True
+except ImportError:
+    _AGENCY_DISPONIBLE = False
+    def obtener_personalidad(t, f=None): return None, None  # type: ignore
+    def listar_agentes(): return "Agency-Agents no disponible."  # type: ignore
+    AGENTES_DISPONIBLES = {}  # type: ignore
+
 if TYPE_CHECKING:
     from llm.base import AgenteIA
     from llm.memory import MemoriaSemantica
@@ -140,6 +150,9 @@ class AgentSession:
         self.agente: AgenteIA | None = None
         self.historial: HistorialCanonico | None = None
         self.memoria: MemoriaSemantica | None = None
+
+        # Agency-Agents: agente forzado manualmente (None = auto-detección)
+        self.agente_forzado: str | None = None
 
         # Cola de confirmaciones pendientes: confirm_id → asyncio.Future
         self._pending_confirms: dict[str, asyncio.Future] = {}
@@ -327,6 +340,39 @@ class AgentSession:
                 yield evento
             return
 
+        # ── Comandos de Agency-Agents ————————————————————————————
+        if cmd in ("/agentes", "/agents", "/personalidades"):
+            yield {"type": "info", "text": listar_agentes()}
+            yield {"type": "done"}
+            return
+
+        if cmd.startswith("/agente "):
+            clave = texto_strip[8:].strip().lower()
+            if clave in ("auto", "ninguno", "none", "off"):
+                self.agente_forzado = None
+                yield {"type": "info", "text": "Modo de agente: **auto-detección** activada."}
+            elif clave in AGENTES_DISPONIBLES:
+                self.agente_forzado = clave
+                meta = AGENTES_DISPONIBLES[clave]
+                yield {"type": "info", "text": f"Agente activo: **{meta['nombre']}**\n_{meta['descripción']}_"}
+            else:
+                claves = ", ".join(f"`{k}`" for k in AGENTES_DISPONIBLES)
+                yield {"type": "error", "text": f"Agente desconocido. Opciones: {claves}"}
+            yield {"type": "done"}
+            return
+
+        if cmd == "/agente":
+            if self.agente_forzado:
+                meta = AGENTES_DISPONIBLES.get(self.agente_forzado, {})
+                yield {"type": "info", "text": f"Agente activo: **{meta.get('nombre', self.agente_forzado)}**"}
+            elif _AGENCY_DISPONIBLE:
+                yield {"type": "info", "text": "Agente: **auto-detección** (sin agente forzado).\nUsa `/agentes` para ver todos."}
+            else:
+                yield {"type": "info", "text": "Agency-Agents no disponible."}
+            yield {"type": "done"}
+            return
+
+
         # ── Mensaje normal al LLM ──────────────────────────────────────────────
         async for evento in self._procesar_llm(texto_strip):
             yield evento
@@ -340,10 +386,29 @@ class AgentSession:
             yield {"type": "done"}
             return
 
-        # Actualizar system prompt con fecha actual — recrear historial preservando mensajes
-        # _mensajes[0] siempre es el system prompt
-        if self.historial._mensajes:
-            self.historial._mensajes[0].contenido = get_system_prompt()
+        # ── Enriquecimiento del system prompt con Agency-Agents ────────────────
+        base_system = get_system_prompt()
+        clave_agente, prompt_agente = obtener_personalidad(texto, self.agente_forzado)
+        if prompt_agente:
+            # Extraer solo la parte de identidad y reglas (sin el frontmatter YAML)
+            partes = prompt_agente.split("---", 2)
+            cuerpo_agente = partes[-1].strip() if len(partes) >= 3 else prompt_agente.strip()
+            system_enriquecido = (
+                f"{base_system}\n\n"
+                f"# Modo de Especialista Activo\n"
+                f"{cuerpo_agente[:3000]}"  # Límite de 3000 chars para no saturar el contexto
+            )
+            if self.historial._mensajes:
+                self.historial._mensajes[0].contenido = system_enriquecido
+            # Notificar al usuario qué especialista se activó (solo auto-detección)
+            if clave_agente and not self.agente_forzado:
+                meta = AGENTES_DISPONIBLES.get(clave_agente, {})
+                yield {"type": "info",
+                       "text": f"_🤖 Especialista activado: **{meta.get('nombre', clave_agente)}**_"}
+        else:
+            # Sin especialista: usar system prompt base
+            if self.historial._mensajes:
+                self.historial._mensajes[0].contenido = base_system
 
         self.historial.agregar_usuario(texto)
 
@@ -476,7 +541,7 @@ class AgentSession:
                 # Ejecutar (en thread para no bloquear)
                 resultado = await asyncio.to_thread(
                     ejecutar_tool,
-                    tc.nombre, tc.argumentos, req_conf, self.memoria,
+                    tc.nombre, tc.argumentos, self.permission_mode, self.memoria,
                 )
 
                 yield {"type": "tool_result", "tool": tc.nombre, "result": resultado}
@@ -744,15 +809,33 @@ def _describir_tool(nombre: str, args: dict) -> str:
 
 def _ayuda_texto() -> str:
     return """**Comandos disponibles:**
-- `/auto` — Toggle modo autónomo ↔ seguro
+
+**Modo y permisos:**
+- `/auto` — Ciclar modo: Inteligente → Seguro → Autónomo → Inteligente
+- `/mode` — Selector interactivo de modo de permisos
+
+**Motor y modelo:**
 - `/switch <motor>` — Cambiar motor (local, gemini, chatgpt, claude, grok, ollama)
 - `/engines` — Ver motores disponibles
+
+**Agency-Agents (Especialistas):**
+- `/agentes` — Ver todos los especialistas disponibles
+- `/agente <clave>` — Activar especialista (sre, devops, security, incident, infra)
+- `/agente auto` — Volver a auto-detección
+
+**Tareas y herramientas:**
 - `/task <descripción>` — Ejecutar tarea en modo autónomo (Agentic Loop)
 - `/web <query>` — Búsqueda web manual
+
+**Centinela:**
 - `/sentinel start/stop/status` — Control del centinela
+
+**Memoria:**
 - `/memory stats` — Estadísticas de memoria
 - `/memory purge` — Purgar memorias expiradas
 - `/memory clear` — Borrar toda la memoria del motor actual
+
+**General:**
 - `/clear` — Limpiar historial de conversación
 - `/export` — Exportar sesión (solo CLI)
 - `/ayuda` — Esta ayuda"""

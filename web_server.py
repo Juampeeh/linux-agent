@@ -167,6 +167,48 @@ async def api_models():
     return JSONResponse({"models": []})
 
 
+@app.post("/api/models/add")
+async def api_models_add(body: dict):
+    """Agrega un modelo a la lista guardada en lm_models.json."""
+    model_id = body.get("model_id", "").strip()
+    if not model_id:
+        raise HTTPException(400, "Campo 'model_id' requerido")
+    models_file = Path(cfg.LM_MODELS_FILE) if hasattr(cfg, "LM_MODELS_FILE") else \
+                  Path(__file__).parent / "lm_models.json"
+    try:
+        data = json.loads(models_file.read_text()) if models_file.exists() else {}
+        models = data.get("models", [])
+        if model_id in models:
+            return JSONResponse({"ok": True, "text": "El modelo ya existe en la lista.", "models": models})
+        models.append(model_id)
+        data["models"] = models
+        data["_comentario"] = data.get("_comentario", "Lista de modelos LM Studio.")
+        models_file.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        return JSONResponse({"ok": True, "text": f"Modelo '{model_id}' agregado.", "models": models})
+    except Exception as e:
+        return JSONResponse({"ok": False, "text": str(e)}, status_code=500)
+
+
+@app.delete("/api/models/{model_id:path}")
+async def api_models_delete(model_id: str):
+    """Elimina un modelo de la lista guardada en lm_models.json."""
+    models_file = Path(cfg.LM_MODELS_FILE) if hasattr(cfg, "LM_MODELS_FILE") else \
+                  Path(__file__).parent / "lm_models.json"
+    try:
+        data = json.loads(models_file.read_text()) if models_file.exists() else {}
+        models = data.get("models", [])
+        if model_id not in models:
+            return JSONResponse({"ok": False, "text": "Modelo no encontrado en la lista."})
+        models.remove(model_id)
+        data["models"] = models
+        models_file.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        return JSONResponse({"ok": True, "text": f"Modelo '{model_id}' eliminado.", "models": models})
+    except Exception as e:
+        return JSONResponse({"ok": False, "text": str(e)}, status_code=500)
+
+
+
+
 @app.get("/api/lmstudio/models")
 async def api_lmstudio_models():
     """Lista de modelos activos en LM Studio en tiempo real (desde la API)."""
