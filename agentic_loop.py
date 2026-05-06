@@ -32,12 +32,18 @@ _MAX_ITER_ABSOLUTO = 30
 def ejecutar_tool(
     tc_nombre: str,
     tc_argumentos: dict,
-    require_confirmation: bool,
+    require_confirmation: bool | str,
     memoria: "MemoriaSemantica | None" = None,
 ) -> str:
     """
     Ejecuta cualquiera de las tools disponibles según el nombre.
     Centraliza el dispatch de tools para main.py y agentic_loop.py.
+
+    require_confirmation puede ser:
+      - bool True/False  (legado, CLI)
+      - str 'auto'       → nunca pedir confirmación
+      - str 'safe'       → siempre pedir confirmación
+      - str 'smart'      → agent_core ya decidió; tools NO bloquean (False efectivo)
     """
     from tools import ejecutar_bash
     from tools_web import buscar_web
@@ -136,7 +142,7 @@ class AgenticTaskRunner:
         self,
         agente: "AgenteIA",
         memoria: "MemoriaSemantica",
-        require_confirmation: bool,
+        require_confirmation: bool | str,
         console=None,
         telegram_send: Callable[[str], None] | None = None,
     ) -> None:

@@ -25,7 +25,7 @@ def ejecutar_ssh(
     password: Optional[str] = None,
     port: int = 22,
     timeout: Optional[int] = None,
-    require_confirmation: Optional[bool] = None,
+    require_confirmation: Optional[bool | str] = None,
 ) -> str:
     """
     Ejecuta un comando en un host remoto via SSH usando paramiko.
@@ -39,14 +39,22 @@ def ejecutar_ssh(
     password             : Contraseña SSH (alternativa a key_path).
     port                 : Puerto SSH (default: 22).
     timeout              : Timeout en segundos.
-    require_confirmation : Si True, pide confirmación antes de ejecutar.
+    require_confirmation : bool, str ('auto'/'safe'/'smart'), o None.
+                           'auto' y 'smart' → no pedir confirmación.
+                           'safe' o True → pedir confirmación.
 
     Retorna
     -------
     String con stdout + stderr del comando remoto.
     """
-    if require_confirmation is None:
-        require_confirmation = cfg.REQUIRE_CONFIRMATION
+    # Normalizar a bool
+    if isinstance(require_confirmation, str):
+        _pedir_confirm = (require_confirmation == 'safe')
+    elif require_confirmation is None:
+        _pedir_confirm = bool(cfg.REQUIRE_CONFIRMATION)
+    else:
+        _pedir_confirm = bool(require_confirmation)
+
     if timeout is None:
         timeout = cfg.SSH_DEFAULT_TIMEOUT
 
@@ -59,7 +67,7 @@ def ejecutar_ssh(
     ))
 
     # Confirmación en modo seguro
-    if require_confirmation:
+    if _pedir_confirm:
         try:
             ok = Confirm.ask(
                 "[bold yellow]  ¿Ejecutar este comando remoto?[/]",

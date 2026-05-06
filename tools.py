@@ -56,7 +56,7 @@ def _es_comando_riesgoso(comando: str) -> str | None:
 
 def ejecutar_bash(
     comando: str,
-    require_confirmation: bool | None = None,
+    require_confirmation: bool | str | None = None,
 ) -> str:
     """
     Ejecuta un comando bash localmente usando subprocess con streaming en tiempo real.
@@ -64,16 +64,28 @@ def ejecutar_bash(
     Parámetros
     ----------
     comando              : String con el comando a ejecutar.
-    require_confirmation : Si True, pausa y pide confirmación al usuario.
-                           Si None, usa el valor de cfg.REQUIRE_CONFIRMATION.
+    require_confirmation : Controla si se pide confirmación:
+                           - bool True/False (legado)
+                           - str 'safe'  → siempre confirmar
+                           - str 'smart' → confirmar si el comando es destructivo
+                           - str 'auto'  → NUNCA confirmar (modo autónomo)
+                           - None        → usar cfg.REQUIRE_CONFIRMATION
 
     Retorna
     -------
     String con stdout + stderr combinados (máx MAX_OUTPUT_CHARS).
     En caso de error retorna el mensaje de error.
     """
-    if require_confirmation is None:
-        require_confirmation = cfg.REQUIRE_CONFIRMATION
+    # Normalizar a bool: los strings 'auto' nunca piden confirmación
+    if isinstance(require_confirmation, str):
+        # 'auto' → False (ejecutar sin preguntar)
+        # 'safe' → True  (siempre preguntar)
+        # 'smart' → False (agent_core ya decidió si hace falta; si llegó aquí, no pide)
+        _pedir_confirm = (require_confirmation == 'safe')
+    elif require_confirmation is None:
+        _pedir_confirm = bool(cfg.REQUIRE_CONFIRMATION)
+    else:
+        _pedir_confirm = bool(require_confirmation)
 
     # ── Advertencia si el comando puede bloquearse ────────────────────────────
     advertencia = _es_comando_riesgoso(comando)
@@ -86,8 +98,8 @@ def ejecutar_bash(
     cmd_text.append(comando, style="bold yellow")
     console.print(Panel(cmd_text, title="[bold cyan]Comando a ejecutar[/]", border_style="cyan"))
 
-    # ── Pedir confirmación si está activo ─────────────────────────────────────
-    if require_confirmation:
+    # ── Pedir confirmación solo si corresponde ────────────────────────────────
+    if _pedir_confirm:
         try:
             ok = Confirm.ask(
                 "[bold yellow]  ¿Ejecutar este comando?[/]",

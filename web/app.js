@@ -520,6 +520,7 @@ function updateMemoryPanel(stats) {
 // =============================================================================
 
 let _currentModelId = null;
+let _pendingModelId = null;  // Modelo elegido por el usuario pero aún no confirmado por LM Studio
 
 async function fetchLMStudioModels() {
   try {
@@ -533,11 +534,22 @@ async function fetchLMStudioModels() {
 
 function renderModelList(data) {
   if (!els.modelList) return;
-  _currentModelId = data.current;
+
+  // Si hay un modelo pendiente (el usuario lo seleccionó pero LM Studio aún no lo reportó),
+  // usamos ese en lugar del reportado por LM Studio para que el highlight sea correcto.
+  const reported = data.current;
+  if (_pendingModelId && reported && reported === _pendingModelId) {
+    // LM Studio ya reportó el nuevo modelo como activo → limpiar pending
+    _pendingModelId = null;
+  }
+  const effectiveCurrent = _pendingModelId || reported;
+  _currentModelId = effectiveCurrent;
 
   // Actualizar label del modelo actual
   if (els.modelCurrent) {
-    els.modelCurrent.textContent = data.current || 'Autodetectar';
+    els.modelCurrent.textContent = _pendingModelId
+      ? `⏳ ${_pendingModelId.split('/').pop()} (cargando...)`
+      : (reported || 'Autodetectar');
   }
 
   const models = data.chat_models || [];
@@ -549,10 +561,13 @@ function renderModelList(data) {
   }
 
   for (const modelId of models) {
+    const isPending = modelId === _pendingModelId;
+    const isCurrent = modelId === effectiveCurrent;
     const item = document.createElement('div');
-    item.className = `model-item${modelId === _currentModelId ? ' active' : ''}`;
+    item.className = `model-item${isCurrent ? ' active' : ''}${isPending ? ' loading' : ''}`;
     item.title = modelId;
-    item.innerHTML = `<span class="model-dot"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis">${modelId}</span><button class="model-del-btn" title="Eliminar de lista guardada" data-model="${modelId}">×</button>`;
+    const loadingBadge = isPending ? '<span class="model-loading-badge" title="Cargando en VRAM…">⏳</span>' : '';
+    item.innerHTML = `<span class="model-dot"></span><span style="flex:1;overflow:hidden;text-overflow:ellipsis">${modelId}</span>${loadingBadge}<button class="model-del-btn" title="Eliminar de lista guardada" data-model="${modelId}">×</button>`;
     item.querySelector('span.model-dot, span[style]').addEventListener('click', () => switchModel(modelId));
     item.querySelector('.model-del-btn').addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -563,8 +578,14 @@ function renderModelList(data) {
 }
 
 async function switchModel(modelId) {
-  if (modelId === _currentModelId) return;
-  showToast(`Cambiando a ${modelId.split('/').pop()}...`, 'info', 3000);
+  if (modelId === _pendingModelId) {
+    showToast(`Ya está cargando ${modelId.split('/').pop()}...`, 'info', 2000);
+    return;
+  }
+  _pendingModelId = modelId;  // Marcar como seleccionado localmente de inmediato
+  // Re-renderizar con el pending marcado visualmente
+  fetchLMStudioModels();
+  showToast(`⏳ Cambiando a ${modelId.split('/').pop()}... (puede tardar si se carga desde disco)`, 'info', 5000);
   try {
     const r = await fetch('/api/lmstudio/model', {
       method: 'POST',
@@ -574,13 +595,18 @@ async function switchModel(modelId) {
     const d = await r.json();
     if (d.ok) {
       _currentModelId = modelId;
+      _pendingModelId = null;  // Confirmado por el servidor
       showToast(`✅ ${d.text}`, 'success');
-      renderModelList({ current: modelId, chat_models: Array.from(els.modelList.querySelectorAll('.model-item')).map(el => el.title) });
+      fetchLMStudioModels();  // Refrescar para limpiar el estado de carga
     } else {
+      _pendingModelId = null;  // Error → limpiar pending
       showToast(`❌ ${d.text}`, 'alert');
+      fetchLMStudioModels();
     }
   } catch {
+    _pendingModelId = null;
     showToast('Error al cambiar modelo', 'alert');
+    fetchLMStudioModels();
   }
 }
 

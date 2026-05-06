@@ -214,7 +214,7 @@ async def api_lmstudio_models():
     """Lista de modelos activos en LM Studio en tiempo real (desde la API)."""
     import httpx
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(timeout=8) as client:  # timeout aumentado: modelos pueden tardar en listar
             r = await client.get(f"{cfg.LMSTUDIO_BASE_URL}/models",
                                  headers={"Authorization": "Bearer lm-studio"})
             if r.status_code == 200:

@@ -418,7 +418,7 @@ def _cmd_engines(agente_actual) -> bool:
 def _procesar_turno(
     agente,
     historial: HistorialCanonico,
-    require_confirmation: bool,
+    require_confirmation: bool | str,
     memoria=None,
     pregunta_usuario: str = "",
     telegram_chat_id: int | None = None,

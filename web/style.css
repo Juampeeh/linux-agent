@@ -525,3 +525,26 @@ html, body {
 .model-item:hover .model-del-btn { opacity: 1; }
 .model-del-btn:hover { color: var(--accent-red); }
 
+/* ── Estado de carga de modelo ──────────────────────────────────────────────── */
+.model-item.loading {
+  opacity: 0.75;
+  background: rgba(88,166,255,0.05);
+  border-left: 2px solid var(--accent-blue);
+  animation: modelLoading 1.5s ease-in-out infinite;
+}
+.model-loading-badge {
+  font-size: 12px;
+  flex-shrink: 0;
+  animation: spin 1.5s linear infinite;
+  display: inline-block;
+}
+@keyframes modelLoading {
+  0%, 100% { opacity: 0.75; }
+  50%       { opacity: 1; }
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+
