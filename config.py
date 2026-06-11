@@ -77,17 +77,76 @@ SENTINEL_ANOMALY_THRESHOLD: int = int(os.getenv("SENTINEL_ANOMALY_THRESHOLD", "3
 SENTINEL_LLM_URL: str           = os.getenv("SENTINEL_LLM_URL", LMSTUDIO_BASE_URL)
 SENTINEL_LLM_MODEL: str         = os.getenv("SENTINEL_LLM_MODEL", "")  # vacío = autodetectar
 
-# ── Heimdall (fase 2 — deshabilitado por defecto) ─────────────────────────────
-HEIMDALL_ENABLED: bool        = os.getenv("HEIMDALL_ENABLED", "False").lower() in ("true", "1", "yes")
-HEIMDALL_HOST: str            = os.getenv("HEIMDALL_HOST", "")
-HEIMDALL_USER: str            = os.getenv("HEIMDALL_USER", "")
-HEIMDALL_SSH_KEY: str         = os.getenv("HEIMDALL_SSH_KEY", str(Path.home() / ".ssh" / "id_rsa"))
-HEIMDALL_LOG_PATHS: list[str] = [
-    p.strip() for p in os.getenv(
-        "HEIMDALL_LOG_PATHS",
-        "/var/log/nginx/access.log,/var/log/suricata/eve.json,/var/log/pihole/pihole.log"
-    ).split(",") if p.strip()
-]
+# ── Hosts remotos del Centinela (multi-host) ──────────────────────────────────
+# Cada host se define con SENTINEL_HOST_N_* donde N es un número (1, 2, 3...)
+# Variables por host:
+#   SENTINEL_HOST_N_NAME     — nombre identificador (ej: heimdall, vm-pihole)
+#   SENTINEL_HOST_N_IP       — dirección IP
+#   SENTINEL_HOST_N_USER     — usuario SSH
+#   SENTINEL_HOST_N_PASS     — contraseña SSH (vacío = usar key)
+#   SENTINEL_HOST_N_SSH_KEY  — ruta a clave SSH (default: ~/.ssh/id_rsa)
+#   SENTINEL_HOST_N_SERVICES — servicios a monitorear separados por coma
+#   SENTINEL_HOST_N_LOG_PATHS— rutas de logs separadas por coma
+#   SENTINEL_HOST_N_EXTRA_CHECKS — checks extra: zpool_status, pihole_status
+#   SENTINEL_HOST_N_AUTO_REPAIR  — True/False: reiniciar servicios caídos
+
+from dataclasses import dataclass, field
+
+@dataclass
+class SentinelHostConfig:
+    """Configuración de un host remoto para el centinela."""
+    name: str
+    ip: str
+    user: str
+    password: str = ""
+    ssh_key: str = ""
+    services: list[str] = field(default_factory=list)
+    log_paths: list[str] = field(default_factory=list)
+    extra_checks: list[str] = field(default_factory=list)
+    auto_repair: bool = True
+
+
+def _parse_sentinel_hosts() -> list[SentinelHostConfig]:
+    """Parsea hosts remotos del centinela desde variables de entorno."""
+    hosts = []
+    for n in range(1, 11):  # Hasta 10 hosts
+        prefix = f"SENTINEL_HOST_{n}_"
+        name = os.getenv(f"{prefix}NAME", "")
+        ip = os.getenv(f"{prefix}IP", "")
+        if not name or not ip:
+            continue  # No hay más hosts definidos
+        hosts.append(SentinelHostConfig(
+            name=name,
+            ip=ip,
+            user=os.getenv(f"{prefix}USER", ""),
+            password=os.getenv(f"{prefix}PASS", ""),
+            ssh_key=os.getenv(f"{prefix}SSH_KEY", str(Path.home() / ".ssh" / "id_rsa")),
+            services=[s.strip() for s in os.getenv(f"{prefix}SERVICES", "").split(",") if s.strip()],
+            log_paths=[p.strip() for p in os.getenv(f"{prefix}LOG_PATHS", "").split(",") if p.strip()],
+            extra_checks=[c.strip() for c in os.getenv(f"{prefix}EXTRA_CHECKS", "").split(",") if c.strip()],
+            auto_repair=os.getenv(f"{prefix}AUTO_REPAIR", "True").lower() in ("true", "1", "yes"),
+        ))
+
+    # ── Retrocompatibilidad con HEIMDALL_* legacy ─────────────────────────
+    if not any(h.name == "heimdall" for h in hosts):
+        legacy_enabled = os.getenv("HEIMDALL_ENABLED", "False").lower() in ("true", "1", "yes")
+        legacy_host = os.getenv("HEIMDALL_HOST", "")
+        if legacy_enabled and legacy_host:
+            hosts.append(SentinelHostConfig(
+                name="heimdall",
+                ip=legacy_host,
+                user=os.getenv("HEIMDALL_USER", ""),
+                ssh_key=os.getenv("HEIMDALL_SSH_KEY", str(Path.home() / ".ssh" / "id_rsa")),
+                log_paths=[p.strip() for p in os.getenv(
+                    "HEIMDALL_LOG_PATHS",
+                    "/var/log/nginx/access.log,/var/log/suricata/eve.json,/var/log/pihole/pihole.log"
+                ).split(",") if p.strip()],
+            ))
+
+    return hosts
+
+
+SENTINEL_HOSTS: list[SentinelHostConfig] = _parse_sentinel_hosts()
 
 # ── Web UI (v3.0) ─────────────────────────────────────────────────────────────
 WEB_ENABLED: bool      = os.getenv("WEB_ENABLED", "False").lower() in ("true", "1", "yes")

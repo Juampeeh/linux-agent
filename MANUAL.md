@@ -1068,17 +1068,76 @@ MEMORY_CONSOLIDATE_ON_TASK=True # Consolida el episodio al terminar /task
 
 ---
 
-## 16. Centinela de Fondo (v2.0)
+## 16. Centinela Multi-Host (v4.0)
 
-El **Centinela** es un proceso daemon que analiza el sistema periódicamente en background y te alerta si detecta anomalías.
+El **Centinela** es un proceso daemon que analiza el sistema local y hosts remotos periódicamente en background, conectándose vía SSH a cada servidor de tu red para monitorear servicios, logs y salud del hardware.
 
-### Activar en .env (inicio automático)
+### Arquitectura
+
+```
+┌─────────────────────────────────────────────────────┐
+│  sentinel.py (Daemon en la VM del agente)           │
+│                                                      │
+│  Cada ciclo (configurable, default 5 min):          │
+│  1. Estado LOCAL (CPU/RAM/Disco del agente)         │
+│  2. SSH → Heimdall (192.168.0.152)                  │
+│     - pihole status + zpool status                   │
+│     - servicios: pihole/suricata/crowdsec/nginx/etc │
+│     - tail logs (pihole, crowdsec, nginx, auth)     │
+│  3. SSH → VM Pi-hole (192.168.0.141)                │
+│     - pihole status                                  │
+│     - servicios + logs + suricata alertas            │
+│  4. Enviar estado combinado → LLM para análisis    │
+│  5. Si anomalía → ALERT + Telegram + auto-repair   │
+└─────────────────────────────────────────────────────┘
+```
+
+### Activar en .env
 
 ```env
 SENTINEL_ENABLED=True
 SENTINEL_INTERVAL_SECONDS=300   # Cada 5 minutos
 SENTINEL_LOG_TAIL_LINES=100     # Cuántas líneas de log analizar
 ```
+
+### Configurar hosts remotos
+
+Cada host se define con el prefijo `SENTINEL_HOST_N_` en el `.env`:
+
+```env
+# Host 1: Heimdall (PC física — DNS primario + seguridad)
+SENTINEL_HOST_1_NAME=heimdall
+SENTINEL_HOST_1_IP=192.168.0.152
+SENTINEL_HOST_1_USER=heimdall
+SENTINEL_HOST_1_PASS=12344321
+SENTINEL_HOST_1_SERVICES=pihole-FTL,suricata,crowdsec,nginx,unbound,evebox
+SENTINEL_HOST_1_LOG_PATHS=/mnt/heimdall-data/pihole/logs/pihole.log,/var/log/crowdsec_api.log,/var/log/nginx/error.log,/var/log/auth.log
+SENTINEL_HOST_1_EXTRA_CHECKS=zpool_status,pihole_status
+SENTINEL_HOST_1_AUTO_REPAIR=True
+
+# Host 2: VM Pi-hole (DNS backup)
+SENTINEL_HOST_2_NAME=vm-pihole
+SENTINEL_HOST_2_IP=192.168.0.141
+SENTINEL_HOST_2_USER=pihole
+SENTINEL_HOST_2_PASS=12344321
+SENTINEL_HOST_2_SERVICES=pihole-FTL,suricata,crowdsec,nginx,unbound,evebox
+SENTINEL_HOST_2_LOG_PATHS=/var/log/pihole/pihole.log,/var/log/suricata/eve.json,/var/log/crowdsec_api.log,/var/log/nginx/error.log
+SENTINEL_HOST_2_EXTRA_CHECKS=pihole_status
+SENTINEL_HOST_2_AUTO_REPAIR=True
+```
+
+> **Variables por host:**
+> | Variable | Descripción |
+> |----------|-------------|
+> | `_NAME` | Nombre identificador del host |
+> | `_IP` | Dirección IP |
+> | `_USER` | Usuario SSH |
+> | `_PASS` | Contraseña SSH (vacío = usar clave SSH) |
+> | `_SSH_KEY` | Ruta a clave SSH (default: `~/.ssh/id_rsa`) |
+> | `_SERVICES` | Servicios systemd a verificar (separados por coma) |
+> | `_LOG_PATHS` | Rutas de logs a analizar (separados por coma) |
+> | `_EXTRA_CHECKS` | Checks adicionales: `zpool_status`, `pihole_status` |
+> | `_AUTO_REPAIR` | Si `True`, reinicia automáticamente servicios caídos |
 
 ### Activar/desactivar en caliente
 
@@ -1088,18 +1147,34 @@ SENTINEL_LOG_TAIL_LINES=100     # Cuántas líneas de log analizar
 /sentinel status   # Ver estado actual y última alerta
 ```
 
-### Qué monitorea
+### Qué monitorea por host
 
-- **CPU** load average (`/proc/loadavg`)
-- **Memoria** `free -h`
-- **Disco** `df -h`
-- **Errores del sistema** `journalctl -p err`
-- **Logs de autenticación** `/var/log/auth.log`
-- **Syslog** `/var/log/syslog`
+| Categoría | Qué verifica |
+|-----------|--------------|
+| **Sistema** | CPU load, RAM, disco, uptime |
+| **Servicios** | `systemctl is-active` de cada servicio configurado |
+| **Pi-hole** | FTL escuchando en puerto 53, bloqueo activo |
+| **ZFS** | Pool ONLINE, sin errores de read/write/checksum |
+| **Suricata** | Solo alertas del `eve.json` (filtrado inteligente, no todo el JSON) |
+| **CrowdSec** | Log de API, bans activos |
+| **Auth** | Intentos de acceso SSH, logins exitosos/fallidos |
+| **Journal** | Errores del sistema (`journalctl -p err`) última hora |
 
-En cada ciclo envía el estado al LLM local (LM Studio o Ollama) para análisis. Si detecta anomalías:
-1. Aparece un panel de alerta en la terminal
-2. Se envía una alerta por Telegram (si está configurado)
+### Auto-repair
+
+Si un servicio monitoreado está caído y `AUTO_REPAIR=True`, el centinela:
+1. Intenta `sudo systemctl restart <servicio>` vía SSH
+2. Espera 2 segundos y verifica que volvió a `active`
+3. Reporta el resultado (éxito o fallo) en el log y vía Telegram
+
+> **Servicios reparables automáticamente:** `pihole-FTL`, `nginx`, `unbound`, `crowdsec`, `crowdsec-firewall-bouncer`, `evebox`, `suricata`
+
+### Alertas
+
+En cada ciclo, el LLM analiza el estado combinado de todos los hosts y determina:
+- **OK** → todo normal, sin acción
+- **WARNING** → anomalía detectada → alerta en terminal + Telegram
+- **CRITICAL** → problema grave → alerta urgente en terminal + Telegram
 
 ### Logs del centinela
 
@@ -1154,31 +1229,35 @@ TELEGRAM_ALLOWED_IDS=123456789
 
 ---
 
-## 18. Heimdall — Monitoreo Remoto (Fase 2)
+## 18. Infraestructura de Red Monitoreada
 
-> ⚠️ **Está deshabilitado por defecto.** Activarlo solo cuando el servidor Heimdall esté configurado con SSH sin contraseña.
+### Heimdall (192.168.0.152) — DNS Primario
 
-El centinela puede conectarse por SSH a tu PC Heimdall (servidor con Pi-hole, Nginx, Suricata, CrowdSec, etc.) y analizar sus logs junto con los del servidor principal.
+PC física con Intel i5-3330, 7.6GB RAM, almacenamiento ZFS RAIDZ2 (4×1TB) montado en `/mnt/heimdall-data`.
 
-### Configuración
+| Servicio | Función | Logs |
+|----------|---------|------|
+| **Pi-hole v6** | DNS bloqueador (puerto 53) | `/mnt/heimdall-data/pihole/logs/pihole.log` |
+| **Unbound** | DNS recursivo (DoT → Quad9, puerto 5335) | Sin logs dedicados |
+| **Suricata** | IDS/IPS | Discovery automático del centinela |
+| **EveBox** | Visor de alertas Suricata (puerto 5636) | `/mnt/heimdall-data/evebox/data/` |
+| **CrowdSec** | WAF + bouncer nftables | `/var/log/crowdsec_api.log` |
+| **Nginx** | Reverse proxy (Pi-hole, EveBox, etc.) | `/var/log/nginx/` |
 
-**Paso 1: Configurar SSH sin contraseña desde la VM**
-```bash
-# En la VM:
-ssh-keygen -t rsa -b 4096   # Si no tenés clave
-ssh-copy-id usuario@ip-heimdall
-```
+> **Nota ZFS:** Heimdall redirige todos los logs al pool ZFS en `/mnt/heimdall-data/`. El centinela verifica la salud del pool ZFS (`zpool status`) en cada ciclo.
 
-**Paso 2: Configurar en .env**
-```env
-HEIMDALL_ENABLED=True
-HEIMDALL_HOST=192.168.0.X      # IP de tu PC Heimdall
-HEIMDALL_USER=tu-usuario
-HEIMDALL_SSH_KEY=~/.ssh/id_rsa  # Clave SSH (generalmente es la default)
-HEIMDALL_LOG_PATHS=/var/log/nginx/access.log,/var/log/suricata/eve.json,/var/log/pihole/pihole.log
-```
+### VM Pi-hole (192.168.0.141) — DNS Backup
 
-**Paso 3:** Reiniciá el agente o el centinela. Ahora en cada ciclo del centinela, Heimdall también será analizado.
+VM Ubuntu 24 LTS, 3 vCPU, 2.2GB RAM, 60GB disco. Misma stack que Heimdall pero sin ZFS.
+
+| Servicio | Función | Logs |
+|----------|---------|------|
+| **Pi-hole v6.3** | DNS bloqueador backup (puerto 53) | `/var/log/pihole/pihole.log` |
+| **Unbound** | DNS recursivo (DoT → Quad9, puerto 5335) | Sin logs dedicados |
+| **Suricata** | IDS/IPS | `/var/log/suricata/eve.json` (~39MB/día) |
+| **EveBox** | Visor de alertas Suricata | Local |
+| **CrowdSec** | WAF + bouncer nftables | `/var/log/crowdsec_api.log` |
+| **Nginx** | Reverse proxy | `/var/log/nginx/` |
 
 ## 19. Memoria Progresiva / Progressive Disclosure (v2.1)
 
