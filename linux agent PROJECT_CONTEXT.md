@@ -49,7 +49,7 @@ linux_agent/
 ├── tools_web.py          ← web_search(): DuckDuckGo via ddgs, sin API key
 ├── tools_files.py        ← read_file() + write_file() con preview/confirmación
 ├── tools_remote.py       ← execute_ssh() via paramiko, wake_on_lan(), modos bool|str
-├── sentinel.py           ← Daemon independiente: analiza sistema + LLM + bus SQLite + WAL + JIT fallback
+├── sentinel.py           ← Daemon independiente v4.0: análisis Multi-Host (N-Nodos vía SSH) + Auto-Repair + LLM + WAL
 ├── agentic_loop.py       ← AgenticTaskRunner: /task con reintentos + memoria + web (firma bool|str)
 ├── memory_consolidator.py← Consolida episodios en memoria al terminar /task
 ├── telegram_bot.py       ← Bot async Telegram: polling + InlineKeyboard + alertas
@@ -277,13 +277,16 @@ memoria.marcar_leidos_sentinel(ids)
 
 ---
 
-## Centinela (`sentinel.py`) — v2.1
+## Centinela (`sentinel.py`) — v4.0 Multi-Host
 
-Proceso daemon independiente con estas características:
+Proceso daemon independiente rediseñado para escanear *N* servidores remotos además de la VM local:
 
-- **Comunicación:** bus de mensajes via tabla `sentinel_messages` en `memory.db`
-- **Persistencia:** archivo `.sentinel.pid` para rastreo cross-sesión
-- **Desvinculación:** `DETACHED_PROCESS` (Windows) / `start_new_session=True` (Linux)
+- **Multi-Host:** Escanea N-hosts por SSH definidos en `.env` (ej: Heimdall físico + VM Pi-hole).
+- **Auto-Repair:** Intenta `systemctl restart` automáticamente si detecta servicios críticos caídos (pihole, nginx, etc.).
+- **Filtrado JSON:** Filtra masivos `eve.json` de Suricata localmente vía bash remoto para evitar Context Overflow.
+- **Comunicación:** bus de mensajes via tabla `sentinel_messages` en `memory.db` (con retry system para evitar lock de DB).
+- **Persistencia:** archivo `.sentinel.pid` para rastreo cross-sesión.
+- **Desvinculación:** `DETACHED_PROCESS` (Windows) / `start_new_session=True` (Linux).
 - **JIT Fallback:** si LM Studio tira 400 "No models loaded":
   1. Lee `lm_models.json` → toma el primer modelo
   2. Fallback a `SENTINEL_LLM_MODEL` del `.env`
@@ -396,12 +399,12 @@ python sentinel.py --once   # un solo ciclo (testing)
 - ✅ **8 herramientas** disponibles para el LLM (bash, web, archivos, SSH, WoL, memoria x2)
 - ✅ **GitHub** publicado: https://github.com/Juampeeh/linux-agent
 - ✅ **Progressive Disclosure** — memoria bajo demanda sin Context Overflow
-- ✅ **Sentinel daemon persistente** — sobrevive al cierre del chat (PID file)
+- ✅ **Sentinel daemon v4.0** — Multi-Host, monitorea local, Heimdall (ZFS/Pi-hole principal) y VM Pi-hole (backup) concurrentemente.
+- ✅ **Auto-Repair del Centinela** — Reinicia automáticamente servicios críticos sin preguntar.
 - ✅ **Telegram bot** — alertas automáticas
 - ✅ **Agentic Loop** `/task` con reintentos: memoria → web → reintento
 - ✅ **Streaming bash** con `select` + timeout global
 - ✅ **System prompt dinámico** con fecha/hora del sistema inyectada
-- ⬜ Heimdall (Fase 2) — preparado en código pero desactivado (HEIMDALL_ENABLED=False)
 - ⬜ Ollama en VM no probado (no instalado en la VM de prueba)
 
 ---
