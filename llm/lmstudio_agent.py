@@ -210,7 +210,14 @@ class LMStudioAgente(AgenteIA):
         content    = (mensaje.content or "").strip()
         reasoning  = getattr(mensaje, "reasoning_content", None) or ""
         reasoning  = reasoning.strip()
+        import re
         texto = content or reasoning  # content tiene prioridad; fallback a reasoning
+        
+        # Limpieza de tokens "basura" que algunos modelos devuelven (ej. Qwen/Gemma)
+        if texto:
+            texto = re.sub(r'<\|?channel\|?>[a-zA-Z]*\n?', '', texto)
+            texto = texto.replace('<channel|>', '')
+            texto = texto.strip()
 
         if not mensaje.tool_calls:
             return RespuestaAgente(texto=texto)
