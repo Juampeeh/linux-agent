@@ -1,5 +1,5 @@
 // =============================================================================
-// app.js — AI Sysadmin Agent Web UI v3.0
+// app.js — AI Sysadmin Agent Web UI v4.0
 // WebSocket chat, panel lateral, confirmaciones y notificaciones
 // =============================================================================
 
@@ -9,6 +9,7 @@
 const WS_CHAT_URL   = `ws://${location.host}/ws/chat`;
 const WS_EVENTS_URL = `ws://${location.host}/ws/events`;
 const SYSTEM_POLL_MS = 15000;
+const SENTINEL_POLL_MS = 30000;
 
 // ── Estado ────────────────────────────────────────────────────
 let chatWs        = null;
@@ -110,6 +111,13 @@ function connectEvents() {
     try { evt = JSON.parse(e.data); } catch { return; }
     if (evt.type === 'sentinel_alert') {
       showToast(`🔍 Centinela: ${evt.resumen}`, evt.nivel === 'ok' ? 'info' : 'alert');
+    }
+    if (evt.type === 'sentinel_status_update') {
+      updateSentinelBadge(evt.corriendo);
+      updateSentinelPanel(evt);
+    }
+    if (evt.type === 'memory_consolidated') {
+      showToast(`🧠 Memoria auto-consolidada: ${evt.guardados} fragmento(s)`, 'success', 3000);
     }
     if (evt.type === 'status_update') applyStatus(evt.status);
     if (evt.type === 'ping') eventsWs.send('pong');
@@ -625,7 +633,7 @@ async function switchModel(modelId) {
   renderModelList({ current: _currentModelId, chat_models: _allModels, live_models: _allModels });
   showToast(`⏳ Cambiando a ${modelId.split('/').pop()}… (puede tardar si carga desde disco)`, 'info', 5000);
   try {
-    const r = await fetch('/api/lmstudio/model', {
+    const r = await safeFetch('/api/lmstudio/model', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ model_id: modelId }),
@@ -634,7 +642,7 @@ async function switchModel(modelId) {
     if (d.ok) {
       _currentModelId = modelId;
       _pendingModelId = null;
-      showToast(`✅ ${d.text}`, 'success');
+      showToast(`✅ ${d.text}  — el historial se mantiene`, 'success');
       fetchLMStudioModels();
     } else {
       _pendingModelId = null;
@@ -694,7 +702,7 @@ async function deleteSavedModel(modelId) {
 
 async function fetchSystemMetrics() {
   try {
-    const r = await fetch('/api/system');
+    const r = await safeFetch('/api/system');
     if (!r.ok) return;
     const d = await r.json();
     applySystemMetrics(d);
@@ -744,7 +752,7 @@ async function searchMemory() {
   const q = els.memSearchInput.value.trim();
   if (!q) return;
   try {
-    const r = await fetch(`/api/memory/search?q=${encodeURIComponent(q)}&top_k=5`);
+    const r = await safeFetch(`/api/memory/search?q=${encodeURIComponent(q)}&top_k=5`);
     const d = await r.json();
     renderMemoryResults(d.results || []);
   } catch {
@@ -782,13 +790,121 @@ function renderMemoryResults(results) {
 
 async function showSentinelLog() {
   try {
-    const r = await fetch('/api/sentinel/log?lines=100');
+    const r = await safeFetch('/api/sentinel/log?lines=100');
     const d = await r.json();
     els.logContent.textContent = (d.lines || []).join('\n') || 'Log vacío.';
     els.logModal.classList.remove('hidden');
   } catch {
     showToast('Error al cargar el log', 'alert');
   }
+}
+
+// =============================================================================
+// Sentinel — Status polling & direct API control
+// =============================================================================
+
+async function fetchSentinelStatus() {
+  try {
+    const r = await safeFetch('/api/sentinel/status');
+    if (!r.ok) return;
+    const d = await r.json();
+    updateSentinelBadge(d.corriendo);
+    updateSentinelPanel(d);
+  } catch {}
+}
+
+async function sentinelAction(accion) {
+  try {
+    const r = await safeFetch('/api/sentinel', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ accion }),
+    });
+    const d = await r.json();
+    if (d.ok !== undefined) {
+      showToast(d.text || `Centinela: ${accion}`, d.ok ? 'success' : 'alert');
+    }
+    // Refresh status immediately
+    fetchSentinelStatus();
+  } catch {
+    showToast(`Error al ${accion} centinela`, 'alert');
+  }
+}
+
+// =============================================================================
+// Memory — Save/Consolidate
+// =============================================================================
+
+async function saveMemory() {
+  try {
+    showToast('⏳ Consolidando memoria...', 'info', 2000);
+    const r = await safeFetch('/api/memory/consolidate', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      showToast(`✅ ${d.text}`, 'success');
+    } else {
+      showToast(`❌ ${d.error || 'Error al consolidar'}`, 'alert');
+    }
+  } catch {
+    showToast('Error al guardar memoria', 'alert');
+  }
+}
+
+// =============================================================================
+// safeFetch — Wrapper global para manejar errores HTTP con toast
+// =============================================================================
+
+async function safeFetch(url, options = {}) {
+  try {
+    const response = await fetch(url, options);
+    if (!response.ok && response.status >= 400) {
+      // Solo mostrar toast para errores de servidor, no para 404 silenciosos
+      if (response.status >= 500) {
+        showToast(`⚠️ Error del servidor (${response.status})`, 'alert', 4000);
+      } else if (response.status === 422) {
+        showToast('⚠️ Error de datos: revise la consola', 'alert', 4000);
+        console.warn(`safeFetch ${url}: 422 Unprocessable Entity`);
+      }
+    }
+    return response;
+  } catch (err) {
+    showToast(`🔌 Error de conexión con el servidor`, 'alert', 4000);
+    throw err;
+  }
+}
+
+// =============================================================================
+// Collapsible panels
+// =============================================================================
+
+function initCollapsiblePanels() {
+  const headers = document.querySelectorAll('.card-header.collapsible');
+  const saved = JSON.parse(localStorage.getItem('panelState') || '{}');
+
+  headers.forEach(header => {
+    const panelKey = header.dataset.panel;
+    const body = document.querySelector(`[data-panel-body="${panelKey}"]`);
+    if (!body) return;
+
+    // Restore saved state
+    if (saved[panelKey] === false) {
+      body.classList.add('collapsed');
+      header.classList.add('collapsed-header');
+    }
+
+    header.addEventListener('click', (e) => {
+      // Don't toggle if clicking a button inside the header
+      if (e.target.closest('.icon-btn') || e.target.closest('.status-badge')) return;
+
+      const isCollapsed = body.classList.toggle('collapsed');
+      header.classList.toggle('collapsed-header', isCollapsed);
+
+      // Save state
+      const state = JSON.parse(localStorage.getItem('panelState') || '{}');
+      state[panelKey] = !isCollapsed;
+      localStorage.setItem('panelState', JSON.stringify(state));
+    });
+  });
 }
 
 // =============================================================================
@@ -1014,9 +1130,15 @@ if (_modelAddInput) _modelAddInput.addEventListener('keydown', e => {
   if (e.key === 'Enter') addSavedModel();
 });
 
-els.btnSentinelStart.addEventListener('click', () => sendMessage('/sentinel start'));
-els.btnSentinelStop.addEventListener('click',  () => sendMessage('/sentinel stop'));
-els.btnSentinelLog.addEventListener('click',   showSentinelLog);
+els.btnSentinelStart.addEventListener('click', (e) => {
+  e.stopPropagation(); sentinelAction('start');
+});
+els.btnSentinelStop.addEventListener('click', (e) => {
+  e.stopPropagation(); sentinelAction('stop');
+});
+els.btnSentinelLog.addEventListener('click', (e) => {
+  e.stopPropagation(); showSentinelLog();
+});
 
 els.btnLogClose.addEventListener('click', () => els.logModal.classList.add('hidden'));
 els.logModal.querySelector('.modal-backdrop').addEventListener('click', () =>
@@ -1028,10 +1150,13 @@ els.memSearchInput.addEventListener('keydown', e => {
 });
 
 els.btnMemPurge.addEventListener('click', async () => {
-  const r = await fetch('/api/memory/purge', { method: 'POST' });
+  const r = await safeFetch('/api/memory/purge', { method: 'POST' });
   const d = await r.json();
   showToast(`Purga: ${d.eliminadas ?? 0} entradas eliminadas`, 'success');
 });
+
+const _btnMemSave = document.getElementById('btn-memory-save');
+if (_btnMemSave) _btnMemSave.addEventListener('click', saveMemory);
 
 document.querySelectorAll('.quick-cmd').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -1054,9 +1179,13 @@ document.querySelectorAll('.quick-cmd').forEach(btn => {
   // Refrescar modelos cada 60s
   setInterval(fetchLMStudioModels, 60000);
 
+  // Sentinel status polling
+  await fetchSentinelStatus();
+  setInterval(fetchSentinelStatus, SENTINEL_POLL_MS);
+
   // Obtener status del agente: modo, motor, modelo activo
   try {
-    const r = await fetch('/api/status');
+    const r = await safeFetch('/api/status');
     const s = await r.json();
     applyStatus(s);
     if (s.sentinel) updateSentinelPanel(s.sentinel);
@@ -1067,5 +1196,8 @@ document.querySelectorAll('.quick-cmd').forEach(btn => {
       fetchLMStudioModels();
     }
   } catch {}
+
+  // Init collapsible panels
+  initCollapsiblePanels();
 })();
 

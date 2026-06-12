@@ -18,7 +18,7 @@
         <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
       </svg>
       <span class="brand-name">AI Sysadmin</span>
-      <span class="brand-version" id="app-version">v3.0</span>
+      <span class="brand-version" id="app-version">v4.0</span>
     </div>
     <div class="header-controls">
       <div class="motor-selector">
@@ -73,14 +73,15 @@
     <aside id="side-panel">
       <!-- Modelo LM Studio -->
       <div class="panel-card" id="model-card">
-        <div class="card-header">
+        <div class="card-header collapsible" data-panel="model">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
           <h2>Modelo LM Studio</h2>
           <button id="btn-refresh-models" class="icon-btn" title="Actualizar lista de modelos">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           </button>
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </div>
-        <div class="card-body">
+        <div class="card-body" data-panel-body="model">
           <div id="model-current" class="model-current-label">Cargando...</div>
           <div id="model-list" class="model-list"></div>
           <div class="memory-search-row" style="margin-top:8px">
@@ -94,14 +95,15 @@
       <!-- Sistema -->
 
       <div class="panel-card" id="system-card">
-        <div class="card-header">
+        <div class="card-header collapsible" data-panel="system">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
           <h2>Sistema</h2>
           <button id="btn-refresh-system" class="icon-btn" title="Actualizar métricas">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           </button>
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </div>
-        <div class="card-body">
+        <div class="card-body" data-panel-body="system">
           <div class="metric-row">
             <span class="metric-label">CPU</span>
             <div class="metric-bar"><div class="bar-fill cpu-fill" id="cpu-bar"></div></div>
@@ -123,12 +125,13 @@
 
       <!-- Centinela -->
       <div class="panel-card" id="sentinel-card">
-        <div class="card-header">
+        <div class="card-header collapsible" data-panel="sentinel">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           <h2>Centinela</h2>
           <span id="sentinel-status-badge" class="status-badge stopped">Detenido</span>
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </div>
-        <div class="card-body">
+        <div class="card-body" data-panel-body="sentinel">
           <p id="sentinel-summary" class="sentinel-summary">Sin datos aún.</p>
           <p id="sentinel-last-update" class="sentinel-meta">–</p>
           <div class="sentinel-actions">
@@ -141,12 +144,13 @@
 
       <!-- Memoria -->
       <div class="panel-card" id="memory-card">
-        <div class="card-header">
+        <div class="card-header collapsible" data-panel="memory">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
           <h2>Memoria</h2>
-          <span id="memory-status-badge" class="status-badge" id="mem-badge">–</span>
+          <span id="memory-status-badge" class="status-badge">–</span>
+          <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </div>
-        <div class="card-body">
+        <div class="card-body" data-panel-body="memory">
           <p id="memory-stats-text" class="memory-stats">–</p>
           <div class="memory-search-row">
             <input type="text" id="memory-search-input" placeholder="Buscar en memoria..." aria-label="Buscar en memoria" />
@@ -155,6 +159,7 @@
           <div id="memory-search-results" class="memory-results hidden"></div>
           <div class="sentinel-actions" style="margin-top:8px">
             <button id="btn-memory-purge" class="action-btn-small">🗑 Purgar TTL</button>
+            <button id="btn-memory-save" class="action-btn-small success">💾 Guardar Memoria</button>
           </div>
         </div>
       </div>

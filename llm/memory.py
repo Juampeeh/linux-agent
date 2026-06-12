@@ -158,9 +158,10 @@ class MemoriaSemantica:
             self._conn = sqlite3.connect(
                 self._db_path, 
                 check_same_thread=False, 
-                timeout=30.0
+                timeout=60.0
             )
             self._conn.execute("PRAGMA journal_mode=WAL;")
+            self._conn.execute("PRAGMA busy_timeout=60000;")
             self._conn.executescript(_SCHEMA)
             self._conn.commit()
             # Migración: agregar columnas nuevas si la DB es anterior a v2.0
@@ -559,7 +560,9 @@ class MemoriaSemantica:
         conn = self._conn
         if conn is None:
             try:
-                conn = sqlite3.connect(cfg.MEMORY_DB_PATH, check_same_thread=False)
+                conn = sqlite3.connect(cfg.MEMORY_DB_PATH, check_same_thread=False, timeout=60.0)
+                conn.execute("PRAGMA journal_mode=WAL;")
+                conn.execute("PRAGMA busy_timeout=60000;")
                 conn.executescript(_SCHEMA)
                 conn.commit()
             except Exception as e:
@@ -590,7 +593,9 @@ class MemoriaSemantica:
         conn = self._conn
         if conn is None:
             try:
-                conn = sqlite3.connect(cfg.MEMORY_DB_PATH, check_same_thread=False)
+                conn = sqlite3.connect(cfg.MEMORY_DB_PATH, check_same_thread=False, timeout=60.0)
+                conn.execute("PRAGMA journal_mode=WAL;")
+                conn.execute("PRAGMA busy_timeout=60000;")
             except Exception:
                 return []
 

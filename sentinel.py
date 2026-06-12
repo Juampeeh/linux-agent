@@ -143,13 +143,13 @@ class SentinelDB:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False, timeout=60.0)
         self._conn.execute("PRAGMA journal_mode=WAL;")
-        self._conn.execute("PRAGMA busy_timeout=30000;")  # Esperar hasta 30s si está locked
+        self._conn.execute("PRAGMA busy_timeout=60000;")  # Esperar hasta 60s si está locked
         self._conn.executescript(_SCHEMA_SENTINEL)
         self._conn.commit()
 
     def enviar(self, source: str, type_: str, payload: dict | None = None) -> None:
         """Inserta un mensaje en el bus con reintentos ante lock."""
-        for intento in range(5):
+        for intento in range(8):
             try:
                 self._conn.execute(
                     "INSERT INTO sentinel_messages (source, type, payload, created_at) VALUES (?,?,?,?)",
@@ -158,9 +158,9 @@ class SentinelDB:
                 self._conn.commit()
                 return
             except sqlite3.OperationalError as e:
-                if "locked" in str(e).lower() and intento < 4:
-                    logger.debug(f"DB locked, reintento {intento + 1}/5...")
-                    time.sleep(3)
+                if "locked" in str(e).lower() and intento < 7:
+                    logger.debug(f"DB locked, reintento {intento + 1}/8...")
+                    time.sleep(5)
                 else:
                     logger.error(f"No se pudo enviar mensaje al bus (lock persistente): {e}")
                     return

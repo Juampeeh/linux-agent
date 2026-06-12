@@ -42,7 +42,7 @@ from agent_core import AgentSession
 app = FastAPI(
     title="Linux AI Agent Web UI",
     description="Interfaz web para el AI Sysadmin Autónomo",
-    version="3.0.0",
+    version="4.0.0",
     docs_url="/api/docs",
     redoc_url=None,
 )
@@ -109,6 +109,8 @@ async def on_startup():
 
     # Tarea background: polling de alertas del sentinel cada 30s
     asyncio.create_task(_sentinel_polling_task())
+    # Tarea background: auto-consolidación de memoria cada 5 min
+    asyncio.create_task(_memory_auto_consolidate_task())
 
 
 @app.on_event("shutdown")
@@ -334,6 +336,17 @@ async def api_sentinel(body: dict):
         return JSONResponse(status)
 
 
+@app.get("/api/sentinel/status")
+async def api_sentinel_status():
+    """Estado actual del centinela (polling desde el frontend)."""
+    if not _session:
+        return JSONResponse({"corriendo": False, "pid": None, "nivel": "desconocido",
+                             "estado": "stopped", "resumen": "Sesión no inicializada."})
+    from agent_core import _sentinel_status_dict
+    status = _sentinel_status_dict(_session.memoria)
+    return JSONResponse(status)
+
+
 @app.post("/api/memory/purge")
 async def api_memory_purge():
     if not _session or not _session.memoria:
@@ -349,6 +362,45 @@ async def api_memory_clear():
         return JSONResponse({"ok": False, "error": "Memoria no disponible"})
     n = await asyncio.to_thread(_session.memoria.limpiar)
     return JSONResponse({"ok": True, "eliminadas": n})
+
+
+@app.post("/api/memory/consolidate")
+async def api_memory_consolidate():
+    """Fuerza la consolidación de la sesión actual en la memoria semántica."""
+    if not _session or not _session.memoria:
+        return JSONResponse({"ok": False, "error": "Memoria no disponible"})
+    if not _session.historial:
+        return JSONResponse({"ok": False, "error": "Sin historial activo"})
+    try:
+        n = await asyncio.to_thread(_consolidar_sesion)
+        return JSONResponse({"ok": True, "guardados": n, "text": f"✓ {n} fragmento(s) consolidado(s) en memoria."})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+def _consolidar_sesion() -> int:
+    """Consolida el historial de la sesión actual en la memoria semántica."""
+    if not _session or not _session.historial or not _session.memoria:
+        return 0
+    historial = _session.historial
+    mensajes = historial._mensajes
+    if len(mensajes) < 3:  # system + al menos 1 par user/assistant
+        return 0
+    # Recorrer pares usuario-asistente y guardar en memoria
+    guardados = 0
+    for i in range(len(mensajes) - 1):
+        m = mensajes[i]
+        siguiente = mensajes[i + 1]
+        if m.rol == "user" and siguiente.rol == "assistant":
+            contenido = f"P: {m.contenido[:300]}\nR: {siguiente.contenido[:1200]}"
+            if len(siguiente.contenido) > 80:
+                try:
+                    ok = _session.memoria.guardar(contenido, "respuesta_agente")
+                    if ok:
+                        guardados += 1
+                except Exception:
+                    pass
+    return guardados
 
 
 # =============================================================================
@@ -460,11 +512,24 @@ async def ws_events(websocket: WebSocket):
 # =============================================================================
 
 async def _sentinel_polling_task():
-    """Revisa el bus del sentinel cada 30s y broadcast alertas al browser."""
+    """Revisa el bus del sentinel cada 30s y broadcast alertas + estado al browser."""
     while True:
         await asyncio.sleep(30)
         if not _session or not _session.memoria:
             continue
+
+        # Broadcast estado actual del centinela
+        try:
+            from agent_core import _sentinel_status_dict
+            status = _sentinel_status_dict(_session.memoria)
+            await _broadcast_event({
+                "type": "sentinel_status_update",
+                **status,
+            })
+        except Exception:
+            pass
+
+        # Broadcast alertas del bus
         try:
             msgs = _session.memoria.leer_mensajes_sentinel(
                 source_filter="sentinel", solo_no_leidos=True
@@ -484,6 +549,23 @@ async def _sentinel_polling_task():
                             "resumen": resumen,
                             "anomalias": anomalias,
                         })
+        except Exception:
+            pass
+
+
+async def _memory_auto_consolidate_task():
+    """Consolida la memoria de la sesión web automáticamente cada 5 minutos."""
+    while True:
+        await asyncio.sleep(300)  # 5 minutos
+        if not _session or not _session.memoria or not _session.historial:
+            continue
+        try:
+            n = await asyncio.to_thread(_consolidar_sesion)
+            if n > 0:
+                await _broadcast_event({
+                    "type": "memory_consolidated",
+                    "guardados": n,
+                })
         except Exception:
             pass
 

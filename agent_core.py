@@ -221,7 +221,7 @@ class AgentSession:
                 "pid": sentinel_pid,
                 "corriendo": sentinel_alive,
             },
-            "version": "3.1.0",
+            "version": "4.0.0",
         }
 
     # ── Procesamiento de mensajes ──────────────────────────────────────────────

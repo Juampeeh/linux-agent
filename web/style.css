@@ -360,6 +360,17 @@ html, body {
 .card-header h2 { font-size: 13px; font-weight: 600; flex: 1; }
 
 .card-body { padding: 12px 14px; }
+.card-body.collapsed { display: none; }
+
+/* Collapsible panel headers */
+.card-header.collapsible { cursor: pointer; user-select: none; }
+.card-header.collapsible:hover { background: var(--bg-hover); }
+.card-header .chevron {
+  width: 14px; height: 14px; color: var(--text-muted); flex-shrink: 0;
+  transition: transform 0.25s ease;
+  margin-left: auto;
+}
+.card-header.collapsed-header .chevron { transform: rotate(-90deg); }
 
 /* Métricas */
 .metric-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
