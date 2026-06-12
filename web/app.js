@@ -87,20 +87,29 @@ function connectChat() {
     addSystemMessage('Conectado al agente.', 'info');
   };
 
-  chatWs.onclose = () => {
+  chatWs.onclose = (e) => {
+    console.warn('[WS Chat] Closed:', e.code, e.reason);
     setConnectionState('disconnected');
     isConnected = false;
     isBusy = false;
     updateSendBtn();
+    // Reconnect with backoff
     setTimeout(connectChat, 3000);
   };
 
-  chatWs.onerror = () => setConnectionState('disconnected');
+  chatWs.onerror = (err) => {
+    console.error('[WS Chat] Error:', err);
+    setConnectionState('disconnected');
+  };
 
   chatWs.onmessage = e => {
     let evt;
     try { evt = JSON.parse(e.data); } catch { return; }
-    handleChatEvent(evt);
+    try {
+      handleChatEvent(evt);
+    } catch (err) {
+      console.error('[WS] Error handling event:', evt.type, err);
+    }
   };
 }
 
