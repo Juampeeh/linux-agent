@@ -131,10 +131,27 @@ class LMStudioAgente(AgenteIA):
                 )
 
             except openai.BadRequestError as e:
+                error_str = str(e)
+
+                # ── Transitorio: "Model reloaded" ──────────────────────────
+                # LM Studio devuelve 400 cuando el modelo se acaba de cargar
+                # y aún no está listo. Reintentar hasta 3 veces con 5s de espera.
+                _RELOADED_PATTERNS = ("Model reloaded", "model reloaded", "model is loading")
+                if any(p in error_str for p in _RELOADED_PATTERNS) and intento < total_reintentos - 1:
+                    wait_s = 5
+                    print(
+                        f"\n  ⏳ LM Studio: modelo recargándose — "
+                        f"reintentando en {wait_s}s (intento {intento + 1})...",
+                        flush=True,
+                    )
+                    time.sleep(wait_s)
+                    continue
+
+                # ── "No models loaded" — esperar carga ────────────────────
                 # LM Studio no tiene el modelo solicitado cargado.
                 # Estrategia: esperar que cargue; a partir del 2do intento también
                 # probar con el modelo que LM Studio tenga activo en ese momento.
-                if "No models loaded" in str(e) and intento < _REINTENTOS_CARGA:
+                if "No models loaded" in error_str and intento < _REINTENTOS_CARGA:
                     if not carga_avisada:
                         print(
                             f"\n  ⏳ LM Studio no tiene '{self._model_id}' cargado — "
@@ -173,8 +190,8 @@ class LMStudioAgente(AgenteIA):
                             pass  # No hay ningún modelo activo aún, seguir esperando
                     continue
 
-                # Reintentos agotados o error distinto de "No models loaded"
-                if "No models loaded" in str(e):
+                # Reintentos agotados o error distinto
+                if "No models loaded" in error_str:
                     raise RuntimeError(
                         f"LM Studio no pudo cargar ningún modelo tras {_REINTENTOS_CARGA} intentos.\n"
                         "  → Cargá el modelo manualmente en LM Studio UI y volvé a intentar."
