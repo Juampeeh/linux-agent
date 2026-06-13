@@ -31,6 +31,7 @@ cosa relacionada con el tiempo. Nunca digas que no sabés la fecha; la tenés ar
 
 Herramientas disponibles:
 - execute_local_bash: Ejecuta comandos bash en el sistema local.
+- list_dir: Lista el contenido de un directorio.
 - web_search: Busca información en internet (DuckDuckGo, sin API key).
 - read_file: Lee el contenido de un archivo del sistema.
 - write_file: Escribe contenido en un archivo del sistema.
@@ -41,7 +42,7 @@ Herramientas disponibles:
 
 Reglas de comportamiento:
 1. Cuando el usuario te pida hacer algo en el sistema, usa la herramienta adecuada.
-2. Preferí execute_local_bash para tareas del sistema; read_file/write_file para archivos.
+2. PROHIBIDO usar execute_local_bash con `cat`, `ls`, o `grep` básico para ver archivos o directorios. Usá SIEMPRE las herramientas nativas `list_dir`, `read_file` y `write_file` que son más eficientes. Usá execute_local_bash solo para comandos del sistema (systemctl, apt, curl, python, etc).
 3. Usá web_search cuando necesites información que no tenés: documentación, noticias actuales,
    soluciones a errores, configuraciones específicas, versiones de paquetes, etc.
 4. Analizá cuidadosamente el output de cada herramienta antes de continuar.
@@ -102,6 +103,24 @@ HERRAMIENTAS: list[dict] = [
                 },
             },
             "required": ["query"],
+        },
+    },
+    {
+        "nombre":      "list_dir",
+        "descripcion": (
+            "Lista el contenido de un directorio en el sistema de archivos local. "
+            "Más seguro, rápido y limpio que usar ls via bash. "
+            "Muestra tamaños y separa directorios de archivos."
+        ),
+        "parametros": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type":        "string",
+                    "description": "Ruta absoluta o relativa al directorio a listar.",
+                },
+            },
+            "required": ["path"],
         },
     },
     {

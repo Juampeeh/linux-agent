@@ -63,6 +63,10 @@ def ejecutar_tool(
             guardar_en_memoria=memoria,
         )
 
+    elif tc_nombre == "list_dir":
+        from tools_files import list_dir
+        return list_dir(tc_argumentos.get("path", ""))
+
     elif tc_nombre == "read_file":
         return leer_archivo(
             path=tc_argumentos.get("path", ""),

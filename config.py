@@ -42,7 +42,7 @@ ANTHROPIC_MODEL: str   = os.getenv("ANTHROPIC_MODEL", "claude-3-5-haiku-20241022
 REQUIRE_CONFIRMATION: bool = os.getenv("REQUIRE_CONFIRMATION", "True").lower() in ("true", "1", "yes")
 COMMAND_TIMEOUT: int       = int(os.getenv("COMMAND_TIMEOUT", "60"))
 DEFAULT_ENGINE: str        = os.getenv("DEFAULT_ENGINE", "local")
-MAX_OUTPUT_CHARS: int      = int(os.getenv("MAX_OUTPUT_CHARS", "4000"))
+MAX_OUTPUT_CHARS: int      = int(os.getenv("MAX_OUTPUT_CHARS", "15000"))
 
 # ── Memoria semántica ─────────────────────────────────────────────────────────
 MEMORY_ENABLED: bool              = os.getenv("MEMORY_ENABLED", "True").lower() in ("true", "1", "yes")
@@ -166,7 +166,7 @@ SSH_DEFAULT_TIMEOUT: int = int(os.getenv("SSH_DEFAULT_TIMEOUT", "30"))
 # ── Agentic Loop ──────────────────────────────────────────────────────────────
 AGENTIC_MAX_RETRIES: int      = int(os.getenv("AGENTIC_MAX_RETRIES", "5"))
 AGENTIC_USE_WEB_ON_FAIL: bool = os.getenv("AGENTIC_USE_WEB_ON_FAIL", "True").lower() in ("true", "1", "yes")
-AGENTIC_MAX_ITERATIONS: int   = int(os.getenv("AGENTIC_MAX_ITERATIONS", "20"))
+AGENTIC_MAX_ITERATIONS: int   = int(os.getenv("AGENTIC_MAX_ITERATIONS", "30"))
 
 # ── Registro de motores disponibles ──────────────────────────────────────────
 MOTORES_DISPONIBLES: dict[str, dict] = {

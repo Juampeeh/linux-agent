@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 # {"type": "mode_change",  "seguro": bool}
 # {"type": "motor_change", "motor": "..."}
 
-MAX_ITERACIONES = 10
+MAX_ITERACIONES = 30
 
 # ── Modos de permiso ──────────────────────────────────────────────────────────
 # SMART: confirma solo comandos destructivos (default recomendado)

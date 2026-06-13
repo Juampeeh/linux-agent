@@ -16,9 +16,9 @@ from rich.syntax import Syntax
 console = Console()
 
 # Límite de caracteres al leer un archivo (evita sobrecargar el contexto del LLM)
-_MAX_READ_CHARS = 8000
+_MAX_READ_CHARS = 30000
 # Número máximo de líneas mostradas en terminal por leer
-_MAX_DISPLAY_LINES = 60
+_MAX_DISPLAY_LINES = 100
 
 
 def leer_archivo(
@@ -191,3 +191,59 @@ def escribir_archivo(
         msg = f"Error al escribir '{path}': {e}"
         console.print(f"  [red]✗ {msg}[/red]")
         return msg
+
+
+def list_dir(path: str) -> str:
+    """
+    Lista el contenido de un directorio.
+
+    Parámetros
+    ----------
+    path : Ruta absoluta o relativa al directorio.
+
+    Retorna
+    -------
+    Listado del contenido (archivos y subdirectorios) o mensaje de error.
+    """
+    p = Path(path).expanduser().resolve()
+
+    console.print(f"  [dim]📂 Listando directorio: [italic]{p}[/italic]...[/dim]")
+
+    if not p.exists():
+        return f"Error: El directorio '{path}' no existe."
+
+    if not p.is_dir():
+        return f"Error: '{path}' no es un directorio."
+
+    try:
+        items = list(p.iterdir())
+        if not items:
+            return f"El directorio '{path}' está vacío."
+            
+        salida = [f"Contenido de '{path}':"]
+        # Ordenar: directorios primero, luego archivos
+        items.sort(key=lambda x: (not x.is_dir(), x.name.lower()))
+        
+        for item in items:
+            try:
+                stat = item.stat()
+                size = stat.st_size
+                if item.is_dir():
+                    salida.append(f"[DIR]  {item.name}/")
+                else:
+                    if size < 1024:
+                        size_str = f"{size} B"
+                    elif size < 1024 * 1024:
+                        size_str = f"{size / 1024:.1f} KB"
+                    else:
+                        size_str = f"{size / 1024 / 1024:.1f} MB"
+                    salida.append(f"[FILE] {item.name}  ({size_str})")
+            except Exception:
+                salida.append(f"[?]    {item.name} (sin acceso)")
+                
+        resultado = "\n".join(salida)
+        return resultado
+        
+    except Exception as e:
+        return f"Error al listar '{path}': {e}"
+
