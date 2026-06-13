@@ -101,7 +101,7 @@ class LMStudioAgente(AgenteIA):
             "messages":     messages,
             "tools":        tools_openai,
             "tool_choice":  "auto",
-            "temperature":  0.2,
+            "temperature":  0.5,
         }
         if self._model_id:
             kwargs["model"] = self._model_id
